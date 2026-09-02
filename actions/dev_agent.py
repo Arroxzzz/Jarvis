@@ -3,7 +3,9 @@ import sys
 import json
 import re
 import time
+import threading
 from pathlib import Path
+from core.llm_client import gemini_call_resilient
 
 
 def get_base_dir():
@@ -158,8 +160,6 @@ def _write_file(
     project_dir: Path,
     already_written: dict[str, str],
 ) -> str:
-    model = _get_model(MODEL_WRITER)
-
     file_path = file_info["path"]
     file_desc = file_info.get("description", "")
     file_imports = file_info.get("imports", [])
@@ -218,21 +218,14 @@ General rules:
 
 Code for {file_path}:"""
 
-    try:
-        response = model.generate_content(prompt)
-        code = _strip_fences(response.text)
+    code = _strip_fences(gemini_call_resilient(prompt, task_type="code"))
 
-        full_path = project_dir / file_path
-        full_path.parent.mkdir(parents=True, exist_ok=True)
-        full_path.write_text(code, encoding="utf-8")
+    full_path = project_dir / file_path
+    full_path.parent.mkdir(parents=True, exist_ok=True)
+    full_path.write_text(code, encoding="utf-8")
 
-        print(f"[DevAgent] ✅ Written: {file_path} ({len(code)} chars)")
-        return code
-
-    except Exception as e:
-        if _is_rate_limit(e):
-            raise RateLimitError(str(e))
-        raise
+    print(f"[DevAgent] ✅ Written: {file_path} ({len(code)} chars)")
+    return code
 
 def _install_dependencies(dependencies: list[str], project_dir: Path) -> str:
     if not dependencies:
@@ -355,8 +348,6 @@ def _fix_files(
     entry_point: str,
 ) -> dict[str, str]:
 
-    model = _get_model(MODEL_PLANNER)
-
     error_file, error_line = _parse_traceback(error_output, list(file_codes.keys()))
     error_type = _classify_error(error_output)
 
@@ -416,21 +407,15 @@ Rules:
 
 Fixed code for {fix_path}:"""
 
+        fixed = _strip_fences(gemini_call_resilient(prompt, task_type="code"))
         try:
-            response = model.generate_content(prompt)
-            fixed = _strip_fences(response.text)
-
             full_path = project_dir / fix_path
             full_path.parent.mkdir(parents=True, exist_ok=True)
             full_path.write_text(fixed, encoding="utf-8")
-
             updated_codes[fix_path] = fixed
             print(f"[DevAgent] 🔧 Fixed: {fix_path}")
-
         except Exception as e:
-            if _is_rate_limit(e):
-                raise RateLimitError(str(e))
-            print(f"[DevAgent] ⚠️ Could not fix {fix_path}: {e}")
+            print(f"[DevAgent] ⚠️ Could not save fix for {fix_path}: {e}")
 
     return updated_codes
 
@@ -441,6 +426,7 @@ def _build_project(
     timeout: int,
     speak=None,
     player=None,
+    cancel_event: threading.Event | None = None,
 ) -> str:
 
     def log(msg: str):
@@ -480,6 +466,8 @@ def _build_project(
     file_codes: dict[str, str] = {}
 
     for file_info in sorted_files:
+        if cancel_event and cancel_event.is_set():
+            return "Build cancelado pelo usuário, Senhor."
         file_path = file_info.get("path", "")
         if not file_path:
             continue
@@ -523,6 +511,8 @@ def _build_project(
     auto_installs = 0  
 
     for attempt in range(1, MAX_FIX_ATTEMPTS + 1):
+        if cancel_event and cancel_event.is_set():
+            return "Build cancelado pelo usuário, Senhor."
         log(f"Running project (attempt {attempt}/{MAX_FIX_ATTEMPTS})...")
         last_output = _run_project(run_command, project_dir, timeout)
         log(f"Output preview: {last_output[:150]}")
@@ -582,6 +572,7 @@ def dev_agent(
     player=None,
     session_memory=None,
     speak=None,
+    cancel_event: threading.Event | None = None,
 ) -> str:
     p            = parameters or {}
     description  = p.get("description", "").strip()
@@ -599,4 +590,5 @@ def dev_agent(
         timeout      = timeout,
         speak        = speak,
         player       = player,
+        cancel_event = cancel_event,
     )

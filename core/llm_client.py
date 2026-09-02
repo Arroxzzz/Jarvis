@@ -168,3 +168,52 @@ def call_llm_text(
         raise RuntimeError(f"LLM text call failed: {e}")
 
 
+_TRANSIENT_ERR = ("503", "UNAVAILABLE", "RESOURCE_EXHAUSTED", "429", "DEADLINE_EXCEEDED")
+
+def _is_transient(exc: Exception) -> bool:
+    msg = str(exc)
+    return any(k in msg for k in _TRANSIENT_ERR)
+
+
+def gemini_call_resilient(prompt: str, system: str | None = None,
+                          model: str = "gemini-flash-latest",
+                          task_type: str = "general") -> str:
+    """
+    Chama Gemini direto; em erro transiente (503/429/RESOURCE_EXHAUSTED) faz
+    1 retry curto e, se persistir, cai automaticamente para OpenRouter :free.
+    NUNCA propaga exceção — sempre retorna string (mesmo em falha total).
+    """
+    from google import genai
+    import json as _json, time as _t
+
+    try:
+        cfg = _json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+        api_key = cfg.get("gemini_api_key", "")
+    except Exception:
+        api_key = ""
+
+    contents = f"{system}\n\n{prompt}" if system else prompt
+
+    for attempt in range(2):
+        try:
+            client = genai.Client(api_key=api_key)
+            r = client.models.generate_content(model=model, contents=contents)
+            return (r.text or "").strip()
+        except Exception as e:
+            if _is_transient(e) and attempt == 0:
+                print(f"[LLM] Gemini transiente ({e}) — retry em 1.5s")
+                _t.sleep(1.5)
+                continue
+            print(f"[LLM] Gemini falhou ({e}) — fallback OpenRouter")
+            break
+
+    for fb_model in FREE_MODELS.get(task_type, FREE_MODELS["general"]):
+        try:
+            return call_llm_text(prompt, system=system, model=fb_model,
+                                  timeout=20, force_provider="openrouter")
+        except Exception as e:
+            print(f"[LLM] Fallback {fb_model} falhou: {e}")
+            continue
+
+    return "Não foi possível obter resposta — todos os provedores falharam, Senhor."
+

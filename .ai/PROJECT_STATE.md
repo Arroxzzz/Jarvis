@@ -116,3 +116,14 @@ descoberto e corrigido travamento crítico na sessão de voz.
 - CPU/GPU mínimo durante jogos — HUD e métricas pausam ao minimizar.
 - Toda entrega de código é cirúrgica (antes/depois), nunca arquivo completo.
 - Zero saudações/preâmbulos em respostas técnicas.
+
+---
+
+## SPRINT 4 — Resiliência de API + UX de Boot (CONCLUÍDA)
+- Cancelamento cooperativo (threading.Event) para tools em executor — asyncio Task.cancel()
+  sozinho NÃO para threads de run_in_executor; todo tool longo futuro deve seguir esse padrão
+  se precisar ser interrompível de fato.
+- `core/llm_client.py::gemini_call_resilient()` — usar para QUALQUER chamada direta ao
+  Gemini que possa sofrer 503 (dev_agent, code_helper, session summary futuramente).
+- Timezone: SEMPRE `datetime.now(ZoneInfo("America/Sao_Paulo"))`, nunca `datetime.now()` puro
+  em contexto exposto ao usuário — clock do host pode estar em UTC.

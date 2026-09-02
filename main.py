@@ -37,6 +37,7 @@ import json
 import sys
 import traceback
 from datetime import datetime
+from zoneinfo import ZoneInfo
 from pathlib import Path
 
 import sounddevice as sd
@@ -47,6 +48,8 @@ from memory.memory_manager import (
     load_memory, update_memory, format_memory_for_prompt,
     save_session_summary, pop_last_session,
 )
+
+_TZ_BR = ZoneInfo("America/Sao_Paulo")
 
 from actions.file_processor import file_processor
 from actions.flight_finder     import flight_finder
@@ -611,6 +614,8 @@ class JarvisLive:
         self._last_user_speech = time.monotonic()  # updated on every user utterance
         self._session_log: list[str] = []          # conversation turns for end-of-session summary
         self._active_tool_tasks: list[asyncio.Task] = []
+        self._active_cancel_events: list[threading.Event] = []   # cancelamento cooperativo (dev_agent etc.)
+        self._boot_greeted: bool = False
         self._phone_relay_task: asyncio.Task | None = None
 
         self._enhanced_live = True  # affective dialog + proactive audio; auto-disabled if the server rejects them
@@ -618,8 +623,11 @@ class JarvisLive:
         self._plugin_registry = discover_plugins(
             plugins_dir=Path(__file__).resolve().parent / "plugins",
             core_tool_names=_core_names,
-            logger=lambda msg: (print(f"[Plugins] {msg}"), self.ui.write_log(f"SYS: {msg}")),
+            logger=lambda msg: print(f"[Plugins] {msg}"),   # terminal apenas — silencioso no HUD
         )
+        _pcount = self._plugin_registry.list_for_ui()
+        _pvalid = sum(1 for p in _pcount if p["valid"])
+        self.ui.write_log(f"SYS: JARVIS Online — {_pvalid} módulo(s) carregado(s).")
         self.ui.get_plugins = self._plugin_registry.list_for_ui
         self.ui.request_say = self.plugin_say   # plugins: mid-task speech channel
 
@@ -716,11 +724,13 @@ class JarvisLive:
             self.ui.set_state("LISTENING")
 
     def interrupt(self) -> None:
-        """Stop JARVIS mid-speech: cancel running tools, drain queued audio and open mic immediately."""
+        """Stop JARVIS mid-speech: cancel running tools (task + cooperative flag), drain audio."""
         self._interrupted = True
         for t in self._active_tool_tasks:
             if not t.done():
                 t.cancel()
+        for ev in self._active_cancel_events:
+            ev.set()
         q = self.audio_in_queue
         if q:
             drained = 0
@@ -760,8 +770,6 @@ class JarvisLive:
             return f"{label} excedeu {timeout:.0f}s e foi cancelado, Senhor."
 
     def _build_config(self) -> types.LiveConnectConfig:
-        from datetime import datetime
-
         # Load customization from config
         try:
             _cfg = json.loads(open(API_CONFIG_PATH, encoding="utf-8").read())
@@ -775,11 +783,12 @@ class JarvisLive:
         mem_str    = format_memory_for_prompt(memory)
         sys_prompt = _load_system_prompt()
 
-        now      = datetime.now()
-        time_str = now.strftime("%A, %B %d, %Y — %I:%M %p")
+        now      = datetime.now(_TZ_BR)
+        time_str = now.strftime("%A, %d de %B de %Y — %H:%M")
         time_ctx = (
             f"[CURRENT DATE & TIME]\n"
-            f"Right now it is: {time_str}\n"
+            f"Right now it is: {time_str} (horário de Brasília, BRT, UTC-3).\n"
+            f"ALWAYS report time in BRT — NEVER say UTC or any other timezone.\n"
             f"Use this to calculate exact times for reminders.\n\n"
         )
 
@@ -929,7 +938,17 @@ class JarvisLive:
                 result = await self._bounded(loop, lambda: code_helper(parameters=args, player=self.ui, speak=self.speak), 90, "code_helper")
 
             elif name == "dev_agent":
-                result = await self._bounded(loop, lambda: dev_agent(parameters=args, player=self.ui, speak=self.speak), 180, "dev_agent")
+                _cancel_ev = threading.Event()
+                self._active_cancel_events.append(_cancel_ev)
+                try:
+                    result = await self._bounded(
+                        loop,
+                        lambda: dev_agent(parameters=args, player=self.ui, speak=self.speak, cancel_event=_cancel_ev),
+                        180, "dev_agent"
+                    )
+                finally:
+                    if _cancel_ev in self._active_cancel_events:
+                        self._active_cancel_events.remove(_cancel_ev)
 
             elif name == "web_search":
                 result = await self._bounded(loop, lambda: web_search_action(parameters=args, player=self.ui), 30, "web_search")
@@ -1284,7 +1303,7 @@ class JarvisLive:
 
         lang = _val("language")
         name = _val("name")
-        time_str = datetime.now().strftime("%H:%M")
+        time_str = datetime.now(_TZ_BR).strftime("%H:%M")
 
         # Start fetching news immediately — runs in parallel while phase 1 plays
         loop = asyncio.get_event_loop()
@@ -1391,6 +1410,30 @@ class JarvisLive:
                 self.ui.write_log(f"SYS: Briefing phase 2 failed: {e}")
 
         asyncio.create_task(_deliver_news())
+
+    async def _send_boot_greeting(self) -> None:
+        """Saudação proativa leve no boot — independente da briefing de notícias (opt-in)."""
+        await asyncio.sleep(0.3)
+        if not self.session:
+            return
+        last = await asyncio.to_thread(pop_last_session)
+        if last:
+            try:
+                delta = (datetime.now(_TZ_BR).date() - datetime.strptime(last["date"], "%Y-%m-%d").date()).days
+                when = "hoje mais cedo" if delta == 0 else ("ontem" if delta == 1 else f"há {delta} dias")
+            except Exception:
+                when = "da última vez"
+            prompt = (
+                f"Cumprimente o usuário calorosamente e mencione naturalmente que {when}: "
+                f"{last['summary']} Fale primeiro, sem esperar o usuário responder. "
+                f"Máximo 2 frases curtas. Responda em PT-BR."
+            )
+        else:
+            prompt = "Cumprimente o usuário dizendo que está online e pronto, uma frase curta, em PT-BR."
+        try:
+            await self.session.send_client_content(turns={"parts": [{"text": prompt}]}, turn_complete=True)
+        except Exception as e:
+            print(f"[Boot] Greeting failed: {e}")
 
     # ── Session memory ──────────────────────────────────────────────────────────
 
@@ -1621,6 +1664,9 @@ class JarvisLive:
                     self.ui.set_state("LISTENING")
                     self.ui.write_log("SYS: JARVIS online.")
 
+                    if not self._boot_greeted:
+                        self._boot_greeted = True
+                        tg.create_task(self._send_boot_greeting())
                     if self._dashboard:
                         await self._dashboard.broadcast({"type": "status", "state": "active"})
 
