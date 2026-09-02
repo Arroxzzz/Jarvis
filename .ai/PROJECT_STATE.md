@@ -127,3 +127,51 @@ descoberto e corrigido travamento crítico na sessão de voz.
   Gemini que possa sofrer 503 (dev_agent, code_helper, session summary futuramente).
 - Timezone: SEMPRE `datetime.now(ZoneInfo("America/Sao_Paulo"))`, nunca `datetime.now()` puro
   em contexto exposto ao usuário — clock do host pode estar em UTC.
+
+## SPRINT 4 — Diagnóstico de Latência Live API (CRÍTICO)
+
+**Causa raiz:** `gemini-2.5-flash-native-audio-preview-12-2025` é modelo
+PREVIEW em fila de descontinuação — instabilidade de latência é esperada
+para modelos preview, não é bug do JARVIS.
+
+**Correção de rota (IMPORTANTE — diverge do pedido original do usuário):**
+`gemini-1.5-flash` NÃO é compatível com `client.aio.live.connect()` — a
+série 1.5 inteira foi desligada (requests retornam 404) e, mesmo ativa,
+nunca suportou o protocolo Live (WebSocket bidirecional de áudio). Pedidos
+de "modelo estável" para a sessão Live devem apontar para o modelo Live
+ATUAL recomendado pela Google, não para qualquer modelo "estável" genérico
+do catálogo Gemini.
+
+Modelo correto para substituição: `gemini-3.1-flash-live-preview`.
+Mudanças de protocolo exigidas na migração:
+- `thinkingBudget` → `thinkingLevel` (usar `"minimal"` para latência mínima)
+- Eventos de servidor podem conter múltiplos `parts` no mesmo evento
+  (áudio + transcript simultâneos) — código de parsing em `_receive_audio`
+  já itera todos os campos do `server_content`, compatível sem alteração
+- Function calling permanece síncrono (sem impacto — JARVIS já é síncrono
+  por tool call)
+- `self._enhanced_live` (affective dialog / proactive audio) já tem fallback
+  automático caso o novo modelo rejeite esses parâmetros — sem risco de
+  regressão nessa troca
+
+**Padrão de resiliência adotado:** nunca hardcodar modelo Live sem
+fallback de reconexão — `run()` já trata `INVALID_ARGUMENT`/`Unknown name`
+desabilitando `_enhanced_live` e reconectando; esse padrão cobre também
+uma eventual rejeição de `thinkingLevel` pelo novo modelo.
+
+## Clipboard — REMOÇÃO (não desativação)
+Decisão: remover fisicamente `ClipboardPanel`, `_on_clipboard_changed`,
+`_clipboard_sig`, `_show_clipboard_panel`, `_position_clipboard_panel`,
+`_on_clipboard_action` de `ui.py`. Justificativa: é listener sempre-ativo
+(`QApplication.clipboard().dataChanged`) monitorando 100% do clipboard do
+usuário — feature de superfície de privacidade desnecessária uma vez
+rejeitada explicitamente. Deixar como "toggle desligado por padrão" mantém
+código morto + superfície de risco latente sem benefício.
+
+## Roteamento por especialidade — avaliação arquitetural
+Já existe esqueleto em `core/llm_client.py::FREE_MODELS` (general/code/
+reasoning) consumido por `deep_reasoning` via parâmetro `task_type`. Isso
+JÁ É o "agentic router por especialidade" na prática — não requer novo
+subsistema. Expandir a lista de modelos por categoria, sem adicionar
+camada de classificação (custaria uma chamada LLM extra por request,
+contra o objetivo de baixa latência).
