@@ -2,11 +2,12 @@
 System Monitor — background metric checks with voice alert support.
 Zero subprocess calls on all platforms — uses ctypes/pynvml/psutil/wmi only.
 """
-import ctypes
 import platform
 import time
 
 import psutil
+
+from core.hw_sensors import get_gpu_usage as _get_gpu_usage, get_cpu_temp as _get_cpu_temp
 
 _OS = platform.system()  # "Windows" | "Darwin" | "Linux"
 
@@ -19,95 +20,6 @@ DEFAULT_THRESHOLDS = {
 
 _COOLDOWN   = 300
 _CPU_STREAK = 3
-
-# ── NVML DLL cache (Windows: nvml.dll, Linux: libnvidia-ml.so.1) ─────────────
-_nvml_lib: object = None
-_nvml_ok:  object = None   # None=untested  True=works  False=unavailable
-
-
-def _nvml_gpu() -> float:
-    """GPU utilisation via NVML — zero subprocess on all platforms."""
-    global _nvml_lib, _nvml_ok
-    if _nvml_ok is False:
-        return -1.0
-    try:
-        class _Util(ctypes.Structure):
-            _fields_ = [("gpu", ctypes.c_uint), ("memory", ctypes.c_uint)]
-
-        if _nvml_lib is None:
-            if _OS == "Windows":
-                candidates = ("nvml", r"C:\Windows\System32\nvml.dll")
-                _load = ctypes.WinDLL
-            else:
-                candidates = (
-                    "libnvidia-ml.so.1",
-                    "libnvidia-ml.so",
-                    "libnvidia-ml.dylib",
-                )
-                _load = ctypes.CDLL
-            for name in candidates:
-                try:
-                    lib = _load(name)
-                    lib.nvmlInit_v2()
-                    _nvml_lib = lib
-                    break
-                except Exception:
-                    continue
-
-        if _nvml_lib is None:
-            _nvml_ok = False
-            return -1.0
-
-        dev = ctypes.c_void_p()
-        _nvml_lib.nvmlDeviceGetHandleByIndex_v2(0, ctypes.byref(dev))
-        u = _Util()
-        _nvml_lib.nvmlDeviceGetUtilizationRates(dev, ctypes.byref(u))
-        _nvml_ok = True
-        return float(u.gpu)
-    except Exception:
-        _nvml_ok = False
-        return -1.0
-
-
-def _get_gpu_usage() -> float:
-    # pynvml — subprocess-free, works everywhere if installed
-    try:
-        import pynvml  # type: ignore
-        pynvml.nvmlInit()
-        h = pynvml.nvmlDeviceGetHandleByIndex(0)
-        return float(pynvml.nvmlDeviceGetUtilizationRates(h).gpu)
-    except Exception:
-        pass
-
-    return _nvml_gpu()
-
-
-def _get_cpu_temp() -> float:
-    # psutil — works on Linux; occasionally Windows with proper drivers
-    try:
-        temps = psutil.sensors_temperatures()
-        for name in ["coretemp", "k10temp", "cpu_thermal", "acpitz",
-                     "cpu-thermal", "zenpower", "it8688"]:
-            if name in temps and temps[name]:
-                return temps[name][0].current
-        for entries in temps.values():
-            if entries:
-                return entries[0].current
-    except Exception:
-        pass
-
-    # Windows: wmi module (pure Python COM, zero subprocess)
-    if _OS == "Windows":
-        try:
-            import wmi  # type: ignore
-            w = wmi.WMI(namespace="root/wmi")
-            tz = w.MSAcpi_ThermalZoneTemperature()
-            if tz:
-                return (tz[0].CurrentTemperature / 10.0) - 273.15
-        except Exception:
-            pass
-
-    return -1.0
 
 
 def get_system_status() -> dict:

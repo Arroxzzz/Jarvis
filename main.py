@@ -604,11 +604,14 @@ class JarvisLive:
         self.ui.on_interrupt      = self.interrupt
         self._turn_done_event: asyncio.Event | None = None
         self._dashboard     = None
+        self._phone_relay_task: asyncio.Task | None = None
         self._briefing_sent    = False          # morning briefing fires once per process
         self._sys_monitor      = SystemMonitor()  # persistent cooldown state
         self._proactive        = ProactiveEngine()
         self._last_user_speech = time.monotonic()  # updated on every user utterance
         self._session_log: list[str] = []          # conversation turns for end-of-session summary
+        self._active_tool_tasks: list[asyncio.Task] = []
+        self._phone_relay_task: asyncio.Task | None = None
 
         self._enhanced_live = True  # affective dialog + proactive audio; auto-disabled if the server rejects them
         _core_names = {t["name"] for t in TOOL_DECLARATIONS}
@@ -656,10 +659,10 @@ class JarvisLive:
             self._dashboard.set_connect_callback(self._on_phone_connected)
             asyncio.create_task(self._dashboard.serve())
             asyncio.create_task(self._process_dashboard_commands())
-            if self.session is not None:
+            if self.session is not None and (self._phone_relay_task is None or self._phone_relay_task.done()):
                 # Sessão Live já ativa: dispara o relay de áudio do telefone
                 # já agora, sem esperar a próxima reconexão.
-                asyncio.create_task(self._relay_phone_audio())
+                self._phone_relay_task = asyncio.create_task(self._relay_phone_audio())
             self.ui.write_log("SYS: Remote Dashboard iniciado.")
         except Exception as e:
             print(f"[Dashboard] Disabled: {e}")
@@ -713,8 +716,11 @@ class JarvisLive:
             self.ui.set_state("LISTENING")
 
     def interrupt(self) -> None:
-        """Stop JARVIS mid-speech: drain queued audio and open mic immediately."""
+        """Stop JARVIS mid-speech: cancel running tools, drain queued audio and open mic immediately."""
         self._interrupted = True
+        for t in self._active_tool_tasks:
+            if not t.done():
+                t.cancel()
         q = self.audio_in_queue
         if q:
             drained = 0
@@ -746,6 +752,12 @@ class JarvisLive:
         short = str(error)[:120]
         self.ui.write_log(f"ERR: {tool_name} — {short}")
         self.speak(f"Sir, {tool_name} encountered an error. {short}")
+
+    async def _bounded(self, loop, fn, timeout: float, label: str) -> str:
+        try:
+            return await asyncio.wait_for(loop.run_in_executor(None, fn), timeout=timeout)
+        except asyncio.TimeoutError:
+            return f"{label} excedeu {timeout:.0f}s e foi cancelado, Senhor."
 
     def _build_config(self) -> types.LiveConnectConfig:
         from datetime import datetime
@@ -863,12 +875,10 @@ class JarvisLive:
                 result = r or f"Message sent to {args.get('receiver')}."
 
             elif name == "reminder":
-                r = await loop.run_in_executor(None, lambda: reminder(parameters=args, response=None, player=self.ui))
-                result = r or "Reminder set."
+                result = await self._bounded(loop, lambda: reminder(parameters=args, response=None, player=self.ui), 20, "reminder")
 
             elif name == "youtube_video":
-                r = await loop.run_in_executor(None, lambda: youtube_video(parameters=args, response=None, player=self.ui))
-                result = r or "Done."
+                result = await self._bounded(loop, lambda: youtube_video(parameters=args, response=None, player=self.ui), 25, "youtube_video")
 
             elif name == "screen_process":
                 import time as _t_mod
@@ -881,75 +891,66 @@ class JarvisLive:
                 else:
                     self._vision_busy      = True
                     self._vision_last_time = _now
-                    angle     = args.get("angle", "screen").lower()
-                    user_text = args.get("text", "What do you see?")
-                    if angle == "camera":
-                        img_b, mime_t = await loop.run_in_executor(None, _capture_camera)
-                        self.ui.start_camera_stream()
-                        self._vision_cam_active = True
-                        print(f"[Vision] 📷 Camera: {len(img_b):,} bytes")
-                        _stall = "camera"
-                    else:
-                        img_b, mime_t = await loop.run_in_executor(None, _capture_screen)
-                        print(f"[Vision] 🖥️  Screen: {len(img_b):,} bytes")
-                        _stall = "screen"
-                    self._pending_vision = (img_b, mime_t, user_text, angle)
-                    result = (
-                        f"[VISION_ACTIVE] {_stall.capitalize()} captured. "
-                        f"Immediately say ONE short natural sentence in the user's own language, "
-                        f"telling them you are looking at their {_stall} right now. "
-                        f"Do NOT describe or guess content — the actual image arrives in the NEXT message."
-                    )
+                    try:
+                        angle     = args.get("angle", "screen").lower()
+                        user_text = args.get("text", "What do you see?")
+                        if angle == "camera":
+                            img_b, mime_t = await loop.run_in_executor(None, _capture_camera)
+                            self.ui.start_camera_stream()
+                            self._vision_cam_active = True
+                            print(f"[Vision] 📷 Camera: {len(img_b):,} bytes")
+                            _stall = "camera"
+                        else:
+                            img_b, mime_t = await loop.run_in_executor(None, _capture_screen)
+                            print(f"[Vision] 🖥️  Screen: {len(img_b):,} bytes")
+                            _stall = "screen"
+                        self._pending_vision = (img_b, mime_t, user_text, angle)
+                        result = (
+                            f"[VISION_ACTIVE] {_stall.capitalize()} captured. "
+                            f"Immediately say ONE short natural sentence in the user's own language, "
+                            f"telling them you are looking at their {_stall} right now. "
+                            f"Do NOT describe or guess content — the actual image arrives in the NEXT message."
+                        )
+                    except Exception as e:
+                        self._vision_busy = False
+                        result = f"Falha ao capturar {args.get('angle', 'screen')}, Senhor: {e}"
 
             elif name == "close_camera":
                 self.ui.stop_camera_stream()
                 result = "Camera closed."
 
             elif name == "computer_settings":
-                r = await loop.run_in_executor(None, lambda: computer_settings(parameters=args, response=None, player=self.ui))
-                result = r or "Done."
+                result = await self._bounded(loop, lambda: computer_settings(parameters=args, response=None, player=self.ui), 15, "computer_settings")
 
             elif name == "desktop_control":
-                r = await loop.run_in_executor(None, lambda: desktop_control(parameters=args, player=self.ui))
-                result = r or "Done."
+                result = await self._bounded(loop, lambda: desktop_control(parameters=args, player=self.ui), 30, "desktop_control")
 
             elif name == "code_helper":
-                r = await loop.run_in_executor(None, lambda: code_helper(parameters=args, player=self.ui, speak=self.speak))
-                result = r or "Done."
+                result = await self._bounded(loop, lambda: code_helper(parameters=args, player=self.ui, speak=self.speak), 90, "code_helper")
 
             elif name == "dev_agent":
-                r = await loop.run_in_executor(None, lambda: dev_agent(parameters=args, player=self.ui, speak=self.speak))
-                result = r or "Done."
+                result = await self._bounded(loop, lambda: dev_agent(parameters=args, player=self.ui, speak=self.speak), 180, "dev_agent")
 
             elif name == "web_search":
-                r = await loop.run_in_executor(None, lambda: web_search_action(parameters=args, player=self.ui))
-                result = r or "Done."
-                # Mirror results to the on-screen content panel
+                result = await self._bounded(loop, lambda: web_search_action(parameters=args, player=self.ui), 30, "web_search")
                 _mode = args.get("mode", "search")
-                if r and not r.startswith("No results") and not r.startswith("Search failed"):
+                if result and not result.startswith("No results") and not result.startswith("Search failed"):
                     _query = args.get("query") or ", ".join(args.get("items", []))
                     _label = f"{_mode.upper()} — {_query[:38]}" if _query else _mode.upper()
-                    self.ui.show_content(_label, r)
+                    self.ui.show_content(_label, result)
             elif name == "file_processor":
                 if not args.get("file_path") and self.ui.current_file:
                     args["file_path"] = self.ui.current_file
-                r = await loop.run_in_executor(
-                    None,
-                    lambda: file_processor(parameters=args, player=self.ui, speak=self.speak)
-                )
-                result = r or "Done."
+                result = await self._bounded(loop, lambda: file_processor(parameters=args, player=self.ui, speak=self.speak), 120, "file_processor")
 
             elif name == "computer_control":
-                r = await loop.run_in_executor(None, lambda: computer_control(parameters=args, player=self.ui))
-                result = r or "Done."
+                result = await self._bounded(loop, lambda: computer_control(parameters=args, player=self.ui), 20, "computer_control")
 
             elif name == "game_updater":
-                r = await loop.run_in_executor(None, lambda: game_updater(parameters=args, player=self.ui, speak=self.speak))
-                result = r or "Done."
+                result = await self._bounded(loop, lambda: game_updater(parameters=args, player=self.ui, speak=self.speak), 60, "game_updater")
 
             elif name == "flight_finder":
-                r = await loop.run_in_executor(None, lambda: flight_finder(parameters=args, player=self.ui))
-                result = r or "Done."
+                result = await self._bounded(loop, lambda: flight_finder(parameters=args, player=self.ui), 60, "flight_finder")
 
             elif name == "system_status":
                 r = await loop.run_in_executor(None, get_system_status)
@@ -1185,11 +1186,24 @@ class JarvisLive:
                                 asyncio.create_task(_cam_close())
 
                     if response.tool_call:
-                        fn_responses = []
-                        for fc in response.tool_call.function_calls:
+                        calls = response.tool_call.function_calls
+                        for fc in calls:
                             print(f"[JARVIS] 📞 {fc.name}")
-                            fr = await self._execute_tool(fc)
-                            fn_responses.append(fr)
+                        self._active_tool_tasks = [
+                            asyncio.ensure_future(self._execute_tool(fc)) for fc in calls
+                        ]
+                        try:
+                            fn_responses = await asyncio.gather(*self._active_tool_tasks)
+                        except asyncio.CancelledError:
+                            fn_responses = [
+                                types.FunctionResponse(
+                                    id=fc.id, name=fc.name,
+                                    response={"result": "Cancelado pelo usuário, Senhor."}
+                                )
+                                for fc in calls
+                            ]
+                        finally:
+                            self._active_tool_tasks = []
                         await self.session.send_tool_response(
                             function_responses=fn_responses
                         )
@@ -1618,7 +1632,7 @@ class JarvisLive:
                     tg.create_task(self._run_background_monitor())
                     tg.create_task(self._run_proactive_mode())
                     if self._dashboard:
-                        tg.create_task(self._relay_phone_audio())
+                        self._phone_relay_task = tg.create_task(self._relay_phone_audio())
 
                     # Morning briefing — fires once per process launch (if enabled)
                     if not self._briefing_sent and get_brief_enabled():

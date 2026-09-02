@@ -170,48 +170,7 @@ def qcol(h: str, a: int = 255) -> QColor:
     c = QColor(h); c.setAlpha(a); return c
 
 
-# ── Windows GPU via NVML DLL (no subprocess, no console window) ──────────────
-_nvml_lib: object = None   # cached ctypes DLL
-_nvml_ok:  object = None   # None=untested, True=works, False=unavailable
-
-
-def _nvml_gpu_windows() -> float:
-    """Return NVIDIA GPU utilisation % using nvml.dll directly — zero subprocess."""
-    global _nvml_lib, _nvml_ok
-    if _nvml_ok is False:
-        return -1.0
-    try:
-        import ctypes
-
-        class _Util(ctypes.Structure):
-            _fields_ = [("gpu", ctypes.c_uint), ("memory", ctypes.c_uint)]
-
-        if _nvml_lib is None:
-            for dll_name in ("nvml", r"C:\Windows\System32\nvml.dll"):
-                try:
-                    lib = ctypes.WinDLL(dll_name)
-                    lib.nvmlInit_v2()
-                    _nvml_lib = lib
-                    break
-                except Exception:
-                    continue
-
-        if _nvml_lib is None:
-            import pynvml  # type: ignore
-            pynvml.nvmlInit()
-            h = pynvml.nvmlDeviceGetHandleByIndex(0)
-            _nvml_ok = True
-            return float(pynvml.nvmlDeviceGetUtilizationRates(h).gpu)
-
-        dev = ctypes.c_void_p()
-        _nvml_lib.nvmlDeviceGetHandleByIndex_v2(0, ctypes.byref(dev))
-        util = _Util()
-        _nvml_lib.nvmlDeviceGetUtilizationRates(dev, ctypes.byref(util))
-        _nvml_ok = True
-        return float(util.gpu)
-    except Exception:
-        _nvml_ok = False
-        return -1.0
+from core.hw_sensors import get_gpu_usage as _hw_get_gpu, get_cpu_temp as _hw_get_temp
 
 
 class _SysMetrics:
@@ -281,9 +240,9 @@ class _SysMetrics:
         except Exception:
             pass
 
-        # Windows: nvml.dll via ctypes (already cached in _nvml_gpu_windows)
+        # Windows: nvml.dll via ctypes (delegated to core.hw_sensors)
         if _OS == "Windows":
-            return _nvml_gpu_windows()
+            return _hw_get_gpu()
 
         # Linux / macOS: libnvidia-ml shared lib via ctypes
         try:
