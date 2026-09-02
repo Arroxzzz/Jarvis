@@ -1,177 +1,762 @@
-# ⚙️ MARK LI (51)
-### The Ultimate Cross-Platform Personal AI Assistant — By FatihMakes
+Claro, Senhor. Abaixo está o **README.md completo**, já pronto para copiar e colar.
 
-> 📺 **[Watch the full setup video on YouTube](https://www.youtube.com/@FatihMakes)**
+```markdown
+# J.A.R.V.I.S.
 
-A real-time voice AI that can hear, see, understand, and control your computer — on any OS. Supports Windows, macOS, and Linux. Built on the Gemini Live API for native audio streaming, delivering zero subscriptions and total digital autonomy.
+### Just A Rather Very Intelligent System
 
----
+> **Uma extensão de mim.**
 
-## ✨ Overview
+O J.A.R.V.I.S. nasceu de uma ideia simples:
 
-MARK LI is the final form of the core: an assistant you extend without ever touching its engine. Drop a single plugin file into the `plugins/` folder and JARVIS learns a new skill on the next launch — no code changes, no configuration, no risk. On top of that, the voice itself got smarter: JARVIS now hears the emotion in your voice, knows when you're talking to someone else in the room and stays silent, and can hold one conversation for hours without losing the thread.
+**E se a inteligência artificial deixasse de ser apenas algo com que eu converso e passasse a fazer parte do meu próprio ambiente digital?**
 
-It's not just an assistant — it's an extension of your digital life.
+Eu não criei o J.A.R.V.I.S. para ser apenas mais um chatbot genérico em uma aba do navegador.
 
----
+Criei para construir uma **extensão real de mim mesmo**, capaz de compreender meu contexto, interagir com meu computador, executar tarefas e evoluir junto comigo.
 
-## 🚀 Capabilities
-
-### Core Features
-| Feature | Description |
-|---|---|
-| 🧩 Plugin System | Drop a single `.py` file into `plugins/` — JARVIS learns a new skill on next launch |
-| 🎙️ Real-time Voice | Ultra-low latency conversation in any language via Gemini Live API |
-| 💓 Affective Dialog | Hears the emotion in your voice and adapts its tone in response |
-| 🤫 Proactive Audio | Knows when you're not talking to it — background chatter never triggers a reply |
-| ♾️ Unlimited Sessions | Sliding-window context compression — one conversation can last for hours |
-| 🖥️ System Control | Launch apps, adjust volume/brightness, WiFi, shortcuts, power — all by voice |
-| 🧩 Autonomous Tasks | High-level planning for complex multi-step goals via agent mode |
-| 👁️ Visual Awareness | Real-time screen capture and webcam vision piped into your main Gemini session |
-| 🧠 Persistent Memory | Deeply remembers projects, preferences, and personal context across sessions |
-| ⌨️ Hybrid Input | Seamlessly switch between keyboard typing and voice commands |
-| 🌅 Morning Briefing | On first boot: greets you, reads the time, recaps yesterday, and fetches live news |
-| 🔔 Proactive 2.0 | Time-aware, context-aware check-ins — knows the time of day, your projects, and what you've been discussing |
-| 🗓️ Session Memory | Summarises each conversation and mentions it naturally next morning — consumed after use, never repeats |
-| 👁️‍🗨️ Background Monitoring | User-configured topic watching — checks for new headlines once a day and alerts naturally |
-| 📊 Hardware Monitoring | Continuous CPU, RAM, GPU and temperature telemetry with localized voice alerts |
-| 🌤️ Weather Report | Live weather data for your city, personalized from memory |
-| 🗺️ Dynamic Content Panel | Scrollable display layer beneath the HUD that renders web results, news, and search data |
-| 🔍 Multi-Mode Web Search | `news` / `research` / `price` / `compare` / `search` — Gemini Grounded first, DDG fallback |
-| ⏰ Smart Reminders | OS-native scheduled notifications (Windows Task Scheduler / macOS LaunchAgent / Linux systemd) |
-| ✈️ Flight Finder | Live flight price and availability lookup |
-| 🎮 Game Updater | Checks and triggers game updates on Steam and Epic Games on demand |
-| 📂 File Processor | Read, summarize, and answer questions about local files |
-| 💻 Code Helper | Inline code review, debugging, and generation |
-| 🌐 Browser Control | Open URLs, navigate tabs, and interact with the browser by voice |
-| 📨 Send Message | Compose and send messages through WhatsApp, Telegram, and more |
-| 🎬 YouTube Control | Search, play, and control YouTube playback by voice |
-| 🖱️ Desktop Control | Taskbar, window management, and desktop-level operations |
-| 🧑‍💻 Silent Language Memory | Detects spoken language on first use — all future sessions adapt automatically |
-| 📱 Remote Dashboard | Control the assistant from your phone via QR code pairing |
-| ⚡ Auto-Start on Boot | Registers with the OS startup system (registry / LaunchAgent / .desktop) |
-| 📋 Clipboard Intelligence | Copy any text → floating panel with Translate / Summarise / Explain / Fix |
-| 🎨 Assistant Customization | Change the assistant name and your name from the UI — takes effect immediately |
+O objetivo é transformar a inteligência artificial de um conselheiro passivo em um **agente pessoal de sistema**.
 
 ---
 
-## 🆕 What's New in Mark LI
+## O que é o J.A.R.V.I.S.?
 
-### 🧩 Plugin System — Extend JARVIS Without Touching a Single Core File
-The headline feature of Mark LI, and the reason it's the final architecture version. Every new capability from now on ships as a single `.py` file:
+O J.A.R.V.I.S. é um assistente pessoal baseado em inteligência artificial, desenvolvido para interagir diretamente com o ambiente computacional do usuário.
 
-1. Download a plugin file (e.g. `calorie_counter.py`)
-2. Drop it into the `plugins/` folder
-3. Restart JARVIS — done. The skill is live, by voice, in any language.
+Em vez de limitar a interação a perguntas e respostas, o sistema possui ferramentas capazes de executar ações reais no computador.
 
-Each plugin declares its own Gemini tool schema and logic in one file. The engine auto-discovers it at startup, registers it with the Live session, and lists it in the new **🧩 Plugin Manager** panel where every plugin gets its own persistent ON/OFF toggle.
+A ideia pode ser resumida assim:
 
-Safety is built in at three layers: a broken or badly written plugin can **never** crash JARVIS — it simply shows up as "BROKEN" in the manager with the error explained, while every other tool and plugin keeps working. Name collisions with core tools are detected and rejected automatically. Want to write your own? Copy `plugins/_template.py` and fill in two things: the `PLUGIN` dict and the `run()` function.
+```text
+          Assistente tradicional
 
-### 💓 Affective Dialog — JARVIS Hears How You Feel
-Powered by Gemini Live's native audio understanding, JARVIS now picks up the emotion in your voice — excitement, frustration, fatigue — and adapts its own tone in response. Late-night tired questions get calm answers; excited announcements get energy back.
+        Usuário
+           │
+           ▼
+          IA
+           │
+           ▼
+        Resposta
 
-### 🤫 Proactive Audio — Knows When You're Not Talking to It
-The biggest quality-of-life upgrade for an always-listening assistant: JARVIS can now tell when speech isn't addressed to it. Talking to someone in the room, taking a phone call, TV in the background — it stays silent instead of interjecting. No wake word needed, no accidental replies.
 
-### ♾️ Unlimited Session Length — The Conversation Never Dies
-Sliding-window context compression means the Live session no longer terminates when the context window fills up. Combined with session resumption, JARVIS holds one continuous conversation for hours without losing the thread.
+              J.A.R.V.I.S.
 
-All three Live API upgrades degrade gracefully: if the preview API ever rejects them, JARVIS automatically reconnects with the standard configuration — users never see a crash.
+        Usuário
+           │
+           ▼
+       J.A.R.V.I.S.
+           │
+     ┌─────┼─────┐
+     ▼     ▼     ▼
+   Entende Decide Executa
+           │
+           ▼
+        Resultado
+```
+
+O J.A.R.V.I.S. não deve apenas me dizer **como fazer alguma coisa**.
+
+Sempre que possível, ele deve **fazer a coisa por mim**.
 
 ---
 
-## 🗺️ Mark Roadmap
+# Por que eu criei o J.A.R.V.I.S.?
 
-| Mark | Focus |
-|---|---|
-| **XLVIII** | Instant interrupt · parallel news · two-phase briefing · exponential backoff · vision cooldown |
-| **XLIX** | Auto-start · clipboard intelligence · assistant customization |
-| **L** | Session memory · background monitoring · proactive 2.0 · instant vision · parallel news search |
-| **LI** | Plugin system · affective dialog · proactive audio · unlimited sessions |
-| **LII+** | Plugin files: email · quiz mode · calorie counter · calendar · and more |
+O projeto nasceu de uma necessidade pessoal.
+
+Eu queria uma inteligência artificial que estivesse integrada ao meu próprio ecossistema, em vez de me obrigar a adaptar minha rotina à forma como uma IA tradicional funciona.
+
+Queria algo capaz de:
+
+- entender comandos naturais;
+- interagir diretamente com o Windows;
+- abrir aplicativos;
+- trabalhar com arquivos;
+- auxiliar na programação;
+- acompanhar o estado do computador;
+- executar tarefas;
+- pesquisar informações;
+- trabalhar com documentos;
+- lembrar do contexto;
+- permanecer disponível enquanto realizo outras atividades.
+
+Em outras palavras:
+
+> **Eu queria transformar inteligência artificial em uma ferramenta que realmente trabalhasse ao meu lado.**
 
 ---
 
-## ⚡ Quick Start
+# Uma extensão de mim
+
+Essa é a ideia central do projeto.
+
+O J.A.R.V.I.S. foi projetado para se adaptar ao meu ambiente, aos meus projetos, aos meus estudos e à forma como utilizo meu computador.
+
+Ele não precisa ser uma solução genérica perfeita para todas as pessoas.
+
+Ele precisa ser extremamente útil **para mim**.
+
+Meu computador, meus projetos, meus estudos, minha programação, meus arquivos e minha rotina fazem parte do contexto para o qual o sistema está sendo desenvolvido.
+
+A longo prazo, o objetivo é que o J.A.R.V.I.S. conheça suficientemente bem esse ambiente para que muitas tarefas deixem de exigir instruções detalhadas.
+
+---
+
+# Um agente, não apenas um chatbot
+
+A principal diferença conceitual do projeto está na capacidade de agir.
+
+Um chatbot normalmente funciona assim:
+
+```text
+Pergunta
+   ↓
+Processamento
+   ↓
+Resposta
+```
+
+O J.A.R.V.I.S. busca funcionar assim:
+
+```text
+Intenção
+   ↓
+Compreensão
+   ↓
+Planejamento
+   ↓
+Seleção de ferramentas
+   ↓
+Execução
+   ↓
+Verificação
+   ↓
+Resultado
+```
+
+Isso permite que uma solicitação simples possa desencadear uma sequência de ações.
+
+Por exemplo:
+
+```text
+"J.A.R.V.I.S., abra meu projeto."
+
+            ↓
+
+Identifica o projeto
+            ↓
+Localiza os arquivos
+            ↓
+Abre o ambiente necessário
+            ↓
+Executa as ações necessárias
+            ↓
+Informa o resultado
+```
+
+A intenção é reduzir a distância entre **pensar em uma tarefa** e **realizar essa tarefa**.
+
+---
+
+# Capacidades atuais
+
+O projeto possui uma arquitetura modular com diferentes ferramentas e agentes especializados.
+
+### Sistema e computador
+
+- Abertura de aplicativos
+- Controle do desktop
+- Controle de janelas
+- Atalhos e entrada no computador
+- Controle de volume
+- Controle de brilho
+- Configurações do sistema
+- Operações relacionadas à rede e energia
+- Monitoramento de recursos do computador
+
+### Arquivos e documentos
+
+- Operações com arquivos
+- Processamento de documentos
+- Leitura de arquivos
+- Resumo de documentos
+- Análise de conteúdo
+- Organização e manipulação do sistema de arquivos
+
+### Programação
+
+- Geração de código
+- Análise de código
+- Revisão
+- Auxílio em debugging
+- Execução de tarefas relacionadas ao desenvolvimento
+- Agente especializado para tarefas de desenvolvimento
+
+### Web
+
+- Pesquisa na internet
+- Pesquisa de notícias
+- Pesquisa para investigação
+- Comparação de informações
+- Pesquisa de preços
+- Consulta de informações externas
+
+### Navegador
+
+- Abertura de URLs
+- Controle do navegador
+- Navegação
+- Interação com páginas
+
+### Visão
+
+- Processamento da tela
+- Captura de tela
+- Integração com câmera
+- Análise visual através dos modelos utilizados
+
+### Comunicação
+
+- Preparação e envio de mensagens através das integrações disponíveis
+
+### Entretenimento
+
+- Pesquisa e controle do YouTube
+- Gerenciamento de atualizações de jogos compatíveis
+
+### Informações
+
+- Consulta meteorológica
+- Pesquisa de voos
+- Monitoramento de hardware
+
+### Automação
+
+- Lembretes
+- Monitoramento de tópicos
+- Tarefas proativas
+- Execução de determinadas tarefas em segundo plano
+
+---
+
+# Memória
+
+A memória é uma das partes mais importantes da visão de longo prazo do J.A.R.V.I.S.
+
+Atualmente, o projeto possui uma camada de memória capaz de armazenar informações relacionadas à identidade, preferências, projetos, sessões e contexto.
+
+Porém, essa arquitetura ainda representa apenas o começo.
+
+## A memória não deve pertencer ao computador
+
+Uma das principais metas do projeto é fazer com que a memória do J.A.R.V.I.S. deixe de depender exclusivamente da máquina em que ele está sendo executado.
+
+A ideia é:
+
+```text
+                         J.A.R.V.I.S.
+                              │
+                              ▼
+                    ┌────────────────────┐
+                    │ Memória persistente│
+                    │      central       │
+                    └─────────┬──────────┘
+                              │
+                 ┌────────────┼────────────┐
+                 ▼            ▼            ▼
+               PC 01        PC 02        PC 03
+```
+
+O computador seria apenas o ambiente onde o J.A.R.V.I.S. está operando.
+
+Sua memória seria independente.
+
+---
+
+# A memória que não morre
+
+Esse conceito é uma das maiores ambições do projeto.
+
+Eu não quero que a identidade e a história do J.A.R.V.I.S. sejam destruídas simplesmente porque um computador foi formatado.
+
+Se eu trocar de máquina, reinstalar o sistema ou utilizar outro ambiente autorizado, a ideia é que o J.A.R.V.I.S. possa recuperar sua continuidade.
+
+A visão futura é armazenar sua memória em uma infraestrutura persistente, potencialmente baseada em banco de dados, permitindo sincronização entre diferentes dispositivos.
+
+Essa memória poderá conter informações como:
+
+- preferências;
+- projetos;
+- contexto pessoal;
+- histórico relevante;
+- conhecimentos importantes adquiridos;
+- configurações;
+- progresso em projetos;
+- informações utilizadas para personalização;
+- contexto de longo prazo.
+
+Conceitualmente:
+
+```text
+          Máquina pode desaparecer.
+                    │
+                    ▼
+              J.A.R.V.I.S.
+                    │
+                    ▼
+          Recupera sua memória
+                    │
+                    ▼
+             Continua de onde parou
+```
+
+O objetivo é que a continuidade do J.A.R.V.I.S. não dependa da existência de um único computador.
+
+> **A máquina pode mudar. A memória não deveria precisar morrer com ela.**
+
+---
+
+# Identidade
+
+Outra parte fundamental da evolução do projeto é a criação de uma identidade própria para o J.A.R.V.I.S.
+
+A visão é que ele não seja simplesmente um programa que qualquer pessoa possa abrir e utilizar como se fosse uma instalação comum.
+
+O sistema deverá reconhecer uma identidade autorizada antes de disponibilizar suas capacidades e sua memória.
+
+A arquitetura planejada envolve múltiplas camadas de autenticação e proteção.
+
+Conceitualmente:
+
+```text
+             Tentativa de acesso
+                     │
+                     ▼
+              Autenticação 1
+                     │
+                     ▼
+              Identidade válida?
+                 /       \
+               NÃO       SIM
+                │          │
+                ▼          ▼
+             Bloqueia   Autenticação 2
+                            │
+                            ▼
+                     Carrega identidade
+                            │
+                            ▼
+                     Carrega memória
+                            │
+                            ▼
+                       J.A.R.V.I.S.
+```
+
+A intenção é construir uma arquitetura forte de autenticação, proteção de credenciais e controle de acesso.
+
+Nenhum sistema deve ser tratado como literalmente impossível de quebrar. O objetivo é construir uma solução **criptograficamente robusta e resistente a acesso não autorizado**.
+
+---
+
+# Portabilidade
+
+Outra evolução planejada é transformar o J.A.R.V.I.S. em um sistema portátil.
+
+A ideia é poder levar o J.A.R.V.I.S. comigo e utilizá-lo em outra máquina autorizada sem transformar aquele computador em uma instalação permanente.
+
+Um possível cenário seria:
+
+```text
+Meu computador
+      │
+      ▼
+J.A.R.V.I.S.
+      │
+      ▼
+Ambiente portátil
+      │
+      ▼
+Outro computador
+      │
+      ▼
+Autenticação
+      │
+      ▼
+J.A.R.V.I.S. ativo
+      │
+      ▼
+Uso
+      │
+      ▼
+Remoção
+```
+
+Essa arquitetura deverá considerar:
+
+- armazenamento protegido;
+- criptografia;
+- autenticação;
+- gerenciamento de credenciais;
+- permissões do sistema operacional;
+- dados temporários;
+- sincronização de memória;
+- proteção contra acesso não autorizado.
+
+O objetivo é que o J.A.R.V.I.S. possa acompanhar seu usuário sem depender de uma única máquina.
+
+---
+
+# Respeito às permissões do sistema
+
+O J.A.R.V.I.S. foi pensado para ser poderoso dentro das permissões que possui.
+
+Ele não deve depender de mecanismos para contornar a segurança do sistema operacional.
+
+Se determinada operação exigir privilégios administrativos que a conta atual não possui, o sistema deverá reconhecer essa limitação.
+
+A filosofia é simples:
+
+> **O J.A.R.V.I.S. deve ampliar minhas capacidades, não ignorar as regras do sistema em que está executando.**
+
+Isso também torna o projeto mais adequado para ambientes diferentes, onde as permissões podem variar.
+
+---
+
+# Desempenho
+
+O desempenho é uma parte essencial do projeto.
+
+Um assistente que consome recursos excessivos, interrompe outras aplicações ou prejudica jogos deixa de cumprir sua função.
+
+Por isso, o J.A.R.V.I.S. é pensado para funcionar de maneira eficiente em segundo plano, mantendo baixa latência sempre que a tarefa permitir.
+
+A otimização é especialmente importante para meu ambiente de:
+
+- programação;
+- estudos;
+- multitarefa;
+- jogos;
+- desenvolvimento do próprio J.A.R.V.I.S.
+
+A filosofia é:
+
+```text
+Mais inteligência
+       +
+Mais automação
+       +
+Menos desperdício
+       =
+Um assistente realmente utilizável
+```
+
+---
+
+# Arquitetura modular
+
+O J.A.R.V.I.S. foi desenvolvido de forma modular.
+
+O núcleo é responsável pela coordenação da inteligência, estado e execução das ferramentas, enquanto funcionalidades específicas ficam separadas em módulos próprios.
+
+Isso permite evoluir o sistema sem transformar cada alteração em uma modificação do núcleo inteiro.
+
+A arquitetura segue aproximadamente:
+
+```text
+                         J.A.R.V.I.S.
+                              │
+               ┌──────────────┼──────────────┐
+               ▼              ▼              ▼
+            Interface       Núcleo         Memória
+                              │
+                              ▼
+                         Inteligência
+                              │
+                              ▼
+                         Ferramentas
+                              │
+       ┌──────────┬───────────┼───────────┬──────────┐
+       ▼          ▼           ▼           ▼          ▼
+    Sistema    Arquivos    Código      Web       Visão
+```
+
+Essa separação facilita manutenção, testes e evolução.
+
+---
+
+# Interface
+
+A interface gráfica é responsável pela interação visual com o J.A.R.V.I.S.
+
+O projeto utiliza PyQt6 e possui componentes relacionados a:
+
+- estado do assistente;
+- indicadores do sistema;
+- registros de eventos;
+- interação com arquivos;
+- câmera;
+- visualização de informações;
+- dashboard.
+
+A interface continuará sendo reconstruída e evoluída conforme a identidade do J.A.R.V.I.S. amadurece.
+
+---
+
+# Estrutura do projeto
+
+```text
+JARVIS/
+├── main.py
+├── ui.py
+├── setup.py
+├── requirements.txt
+│
+├── actions/
+│   ├── background_monitor.py
+│   ├── browser_control.py
+│   ├── code_helper.py
+│   ├── computer_control.py
+│   ├── computer_settings.py
+│   ├── desktop.py
+│   ├── dev_agent.py
+│   ├── file_controller.py
+│   ├── file_processor.py
+│   ├── flight_finder.py
+│   ├── game_updater.py
+│   ├── open_app.py
+│   ├── proactive.py
+│   ├── screen_processor.py
+│   ├── send_message.py
+│   ├── system_monitor.py
+│   ├── upload_video.py
+│   ├── weather_report.py
+│   ├── web_search.py
+│   └── youtube_video.py
+│
+├── core/
+│   └── installer.py
+│
+├── memory/
+│   └── ...
+│
+└── dashboard/
+    └── server.py
+```
+
+A estrutura pode mudar conforme a arquitetura do sistema evolui.
+
+---
+
+# Tecnologias
+
+O J.A.R.V.I.S. utiliza diferentes tecnologias para inteligência artificial, voz, automação, interface e integração com o sistema operacional.
+
+Entre elas:
+
+- Python
+- PyQt6
+- Gemini / APIs de modelos de linguagem
+- faster-whisper
+- Vosk
+- Edge TTS
+- Kokoro
+- ElevenLabs
+- FastAPI
+- OpenCV
+- PyAutoGUI
+- Playwright
+- PyPDF
+- psutil
+- Requests
+- NumPy
+- APIs e serviços externos
+
+A escolha das tecnologias pode mudar conforme desempenho, privacidade, compatibilidade e evolução da arquitetura.
+
+---
+
+# Instalação
+
+## Requisitos
+
+- Windows, macOS ou Linux, dependendo dos módulos utilizados
+- Python 3.11 ou 3.12
+- Microfone para interação por voz
+- Credenciais/API keys dos serviços utilizados
+- Dependências presentes em `requirements.txt`
+
+## Instalação
 
 ```bash
-git clone https://github.com/FatihMakes/Mark-LI.git
-cd Mark-LI
+git clone https://github.com/Arroxzzz/Jarvis.git
+cd Jarvis
 pip install -r requirements.txt
 python main.py
 ```
 
-> ⚠️ **Installation Note:** Some OS-specific dependencies are not bundled in `requirements.txt` to keep the repo lightweight. If you hit a `ModuleNotFoundError`, install the missing package with `pip install <module_name>`.
+Algumas funcionalidades podem exigir dependências ou configurações adicionais.
 
 ---
 
-## 📋 Requirements
+# Filosofia do projeto
 
-| Requirement | Details |
-| --- | --- |
-| **OS** | Windows 10/11, macOS, or Linux |
-| **Python** | 3.11 or 3.12 |
-| **Microphone** | Required for voice interaction |
-| **API Key** | Free Gemini API key (`config/api_keys.json`) |
+O J.A.R.V.I.S. é guiado por alguns princípios.
 
----
+## 1. Inteligência deve gerar ação
 
-## 🗂️ Project Structure
+Uma resposta pode ser útil.
 
-```
-Mark LI/
-├── main.py                   # Core loop — Gemini Live session, audio I/O, tool dispatch
-├── ui.py                     # PyQt6 HUD — waveform, log panel, plugin manager, camera feed
-├── setup.py                  # First-run configuration wizard
-├── plugins/
-│   └── _template.py          # Copy this to write a new plugin — one file, drop in, done
-├── actions/
-│   ├── web_search.py         # Gemini + DDG parallel search (news, research, price, compare)
-│   ├── screen_processor.py   # Screen capture & webcam vision via Gemini Live
-│   ├── background_monitor.py # User-configured topic watching — daily DDG check, no crypto
-│   ├── proactive.py          # Proactive 2.0 — time/context/rotation-aware check-ins
-│   ├── reminder.py           # OS-native scheduled notifications
-│   ├── system_monitor.py     # CPU / RAM / GPU / temperature telemetry
-│   ├── computer_settings.py  # Volume, brightness, WiFi, power
-│   ├── computer_control.py   # Keyboard shortcuts, mouse, window management
-│   ├── open_app.py           # Application launcher
-│   ├── browser_control.py    # Web browser control
-│   ├── file_controller.py    # File system operations
-│   ├── file_processor.py     # Document reading and summarization
-│   ├── send_message.py       # Messaging integration
-│   ├── weather_report.py     # Live weather data
-│   ├── flight_finder.py      # Flight search
-│   ├── youtube_video.py      # YouTube playback control
-│   ├── game_updater.py       # Game update management (Steam / Epic)
-│   ├── code_helper.py        # Code review and generation
-│   ├── dev_agent.py          # Developer task agent
-│   └── desktop.py            # Desktop and taskbar control
-├── memory/
-│   ├── memory_manager.py     # Load/save long_term.json — sessions, monitors, identity
-│   └── long_term.json        # Persistent store: identity, preferences, projects, sessions, monitors
-├── core/
-│   ├── prompt.txt            # Assistant personality and tool-routing rules
-│   └── plugin_loader.py      # Plugin engine — discovery, validation, crash isolation
-└── config/
-    └── api_keys.json         # API key, OS setting, assistant name, user name
-```
+Uma tarefa concluída é melhor.
+
+## 2. Contexto importa
+
+Uma IA que entende o ambiente consegue tomar decisões melhores e exigir menos instruções manuais.
+
+## 3. A memória deve sobreviver à máquina
+
+O computador pode mudar.
+
+A continuidade do J.A.R.V.I.S. não deveria.
+
+## 4. Privacidade é arquitetura
+
+Dados, credenciais, memória e configurações devem ser tratados como partes fundamentais do sistema.
+
+## 5. O usuário deve manter soberania
+
+O J.A.R.V.I.S. existe para servir ao seu proprietário, e não o contrário.
+
+## 6. O sistema deve evoluir
+
+Novas capacidades devem poder ser incorporadas sem destruir as anteriores.
+
+## 7. Desempenho é parte da inteligência
+
+Não adianta possuir grandes capacidades se o sistema prejudica o computador onde está executando.
 
 ---
 
-## ⚠️ License
+# Roadmap
 
-Personal and non-commercial use only.
-Licensed under **[Creative Commons BY-NC 4.0](https://creativecommons.org/licenses/by-nc/4.0/)**.
+O futuro do J.A.R.V.I.S. não é simplesmente adicionar uma lista infinita de funções.
+
+O objetivo é transformar as funções existentes em um sistema cada vez mais coerente, inteligente e pessoal.
+
+### Memória e identidade
+
+- [ ] Banco de dados de memória persistente
+- [ ] Sincronização de memória entre dispositivos
+- [ ] Identidade persistente do J.A.R.V.I.S.
+- [ ] Recuperação de contexto entre máquinas
+- [ ] Proteção avançada da memória
+- [ ] Gerenciamento seguro de credenciais
+
+### Segurança
+
+- [ ] Autenticação em múltiplas camadas
+- [ ] Proteção de dados sensíveis
+- [ ] Identificação de ambiente
+- [ ] Controle granular de permissões
+- [ ] Proteção da arquitetura portátil
+
+### Portabilidade
+
+- [ ] J.A.R.V.I.S. portátil
+- [ ] Execução em máquinas autorizadas
+- [ ] Ambiente temporário
+- [ ] Sincronização segura
+- [ ] Continuidade entre dispositivos
+
+### Inteligência
+
+- [ ] Melhor compreensão contextual
+- [ ] Planejamento de tarefas mais complexo
+- [ ] Maior autonomia
+- [ ] Melhor gerenciamento de tarefas paralelas
+- [ ] Aprendizado baseado no histórico e contexto
+
+### Interação
+
+- [ ] Controle por gestos
+- [ ] Visão computacional mais avançada
+- [ ] Reconhecimento contextual do ambiente
+- [ ] Interação mais natural por voz
+- [ ] Maior integração entre voz, visão e sistema
+
+### Performance
+
+- [ ] Redução contínua de latência
+- [ ] Melhor utilização de hardware
+- [ ] Otimização para execução em segundo plano
+- [ ] Melhor gerenciamento de recursos
+- [ ] Maior eficiência em tarefas complexas
 
 ---
 
-## 👤 Connect with the Creator
+# Estado do projeto
 
-Engineered by a developer building a real-world JARVIS-style assistant.
-⭐ **Star the repository to support the journey to Mark 100.**
+O J.A.R.V.I.S. está em desenvolvimento ativo.
 
-| Platform | Link |
-| --- | --- |
-| YouTube | [@FatihMakes](https://www.youtube.com/@FatihMakes) |
-| Instagram | [@fatihmakes](https://www.instagram.com/fatihmakes) |
+O projeto possui funcionalidades implementadas e outras que fazem parte de sua evolução planejada.
+
+Este README diferencia deliberadamente essas duas categorias para evitar apresentar como realidade aquilo que ainda está sendo desenvolvido.
+
+A arquitetura continuará mudando conforme novas ideias forem testadas e incorporadas.
+
+---
+
+# Origem e autoria
+
+O J.A.R.V.I.S. é desenvolvido e mantido por **Paulo Renato Mendes Silva** como um projeto pessoal de engenharia, inteligência artificial, automação e interação homem-computador.
+
+A direção atual do projeto, sua identidade, arquitetura em evolução e seus objetivos são definidos de acordo com a visão de seu desenvolvedor.
+
+O projeto também utiliza bibliotecas, modelos, APIs e tecnologias de terceiros. Quando componentes de terceiros ou código derivado forem utilizados, suas respectivas licenças e atribuições devem ser preservadas conforme seus termos.
+
+O objetivo é desenvolver progressivamente uma implementação própria do conceito de J.A.R.V.I.S., com decisões técnicas, identidade e arquitetura próprias.
+
+---
+
+# Licença
+
+Consulte os arquivos de licença presentes no repositório e as licenças individuais das dependências utilizadas.
+
+Componentes de terceiros continuam sujeitos às suas respectivas licenças e condições de uso.
+
+---
+
+# O futuro do J.A.R.V.I.S.
+
+O objetivo final não é criar simplesmente uma inteligência artificial com centenas de ferramentas.
+
+É criar uma inteligência que faça parte do meu ecossistema.
+
+Uma inteligência que conheça meu contexto.
+
+Que possa agir no meu computador.
+
+Que me ajude a estudar.
+
+Que me ajude a programar.
+
+Que acompanhe meus projetos.
+
+Que possa carregar sua memória de um ambiente para outro.
+
+Que tenha uma identidade própria.
+
+Que respeite minha privacidade.
+
+Que evolua junto comigo.
+
+E que, independentemente da máquina onde esteja executando, continue sendo o mesmo J.A.R.V.I.S.
+
+> **Eu não quero apenas conversar com uma inteligência artificial.**
+>
+> **Quero construir uma inteligência que faça parte do meu mundo digital.**
+>
+> **Uma extensão de mim.**
+>
+> **J.A.R.V.I.S.**
+>
+> *Just A Rather Very Intelligent System*
