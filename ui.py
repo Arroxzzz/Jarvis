@@ -1490,92 +1490,6 @@ class PluginManagerOverlay(QWidget):
         self._style_toggle(btn, new_val)
 
 
-class ClipboardPanel(QWidget):
-    """Floating panel shown when text is copied — offers quick Jarvis actions."""
-
-    action_requested = pyqtSignal(str)
-    _W, _H = 326, 112
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        self.setStyleSheet(f"""
-            ClipboardPanel {{
-                background: rgba(0, 8, 14, 248);
-                border: 1px solid {C.BORDER_B};
-                border-radius: 6px;
-            }}
-        """)
-        self.setFixedWidth(self._W)
-        self._clip_text = ""
-
-        lay = QVBoxLayout(self)
-        lay.setContentsMargins(8, 6, 8, 7)
-        lay.setSpacing(4)
-
-        hdr = QHBoxLayout(); hdr.setSpacing(4)
-        icon_lbl = QLabel("◈  CLIPBOARD DETECTED")
-        icon_lbl.setFont(QFont("Courier New", 7, QFont.Weight.Bold))
-        icon_lbl.setStyleSheet(f"color: {C.ACC2}; background: transparent;")
-        hdr.addWidget(icon_lbl); hdr.addStretch()
-        x_btn = QPushButton("✕")
-        x_btn.setFixedSize(16, 16)
-        x_btn.setFont(QFont("Courier New", 8))
-        x_btn.setStyleSheet(f"color: {C.TEXT_DIM}; background: transparent; border: none;")
-        x_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        x_btn.clicked.connect(self.hide)
-        hdr.addWidget(x_btn)
-        lay.addLayout(hdr)
-
-        self._preview = QLabel()
-        self._preview.setFont(QFont("Courier New", 8))
-        self._preview.setStyleSheet(f"""
-            color: {C.TEXT}; background: {C.PANEL2};
-            border: 1px solid {C.BORDER}; border-radius: 3px; padding: 4px 6px;
-        """)
-        self._preview.setWordWrap(False)
-        self._preview.setFixedHeight(28)
-        lay.addWidget(self._preview)
-
-        btn_row = QHBoxLayout(); btn_row.setSpacing(4)
-        _bs = (f"QPushButton {{ background: {C.PANEL2}; color: {C.TEXT_MED}; "
-               f"border: 1px solid {C.BORDER}; border-radius: 2px; }}"
-               f"QPushButton:hover {{ color: {C.PRI}; border-color: {C.BORDER_B}; }}")
-        for label, cmd_fmt in [
-            ("TRANSLATE", "Translate this text to English: {text}"),
-            ("SUMMARISE", "Summarise this: {text}"),
-            ("EXPLAIN",   "Explain this: {text}"),
-            ("FIX",       "Fix grammar and spelling: {text}"),
-        ]:
-            b = QPushButton(label)
-            b.setFixedHeight(22)
-            b.setFont(QFont("Courier New", 7, QFont.Weight.Bold))
-            b.setCursor(Qt.CursorShape.PointingHandCursor)
-            b.setStyleSheet(_bs)
-            b.clicked.connect(lambda _, c=cmd_fmt: self._trigger(c))
-            btn_row.addWidget(b)
-        lay.addLayout(btn_row)
-
-        self._dismiss_timer = QTimer(self)
-        self._dismiss_timer.setSingleShot(True)
-        self._dismiss_timer.timeout.connect(self.hide)
-        self.hide()
-
-    def _trigger(self, cmd_fmt: str):
-        if self._clip_text:
-            self.action_requested.emit(cmd_fmt.format(text=self._clip_text[:800]))
-        self.hide()
-
-    def show_clipboard(self, text: str):
-        self._clip_text = text
-        preview = text[:58].replace('\n', ' ')
-        if len(text) > 58:
-            preview += "…"
-        self._preview.setText(f'"{preview}"')
-        self.show(); self.raise_()
-        self._dismiss_timer.start(8000)
-
-
 class RemoteKeyOverlay(QWidget):
     """Floating overlay — QR code for instant phone pairing + manual key fallback."""
 
@@ -1812,7 +1726,6 @@ class MainWindow(QMainWindow):
     _camera_sig     = pyqtSignal(bytes)      # show camera frame preview (small overlay)
     _cam_stream_sig = pyqtSignal(bool)       # True=start live stream, False=stop
     _cam_frame_sig  = pyqtSignal(bytes)      # live camera frame → HUD area
-    _clipboard_sig  = pyqtSignal(str)        # clipboard text changed (thread-safe)
     _mute_hotkey_sig = pyqtSignal()          # F4 global (pynput) → toggle mute na main thread
 
     def __init__(self, face_path: str):
@@ -1955,17 +1868,11 @@ class MainWindow(QMainWindow):
         self._camera_sig.connect(self._show_camera_frame)
         self._cam_stream_sig.connect(self._on_cam_stream)
         self._cam_frame_sig.connect(self._on_cam_frame)
-        self._clipboard_sig.connect(self._show_clipboard_panel)
         self._mute_hotkey_sig.connect(self._toggle_mute)
         self._cam_stop = threading.Event()
 
         # Camera preview overlay (child of central widget, positioned in resizeEvent)
         self._cam_preview = _CameraPreview(self.centralWidget())
-
-        # Clipboard panel (child of central widget, bottom-center)
-        self._clipboard_panel = ClipboardPanel(self.centralWidget())
-        self._clipboard_panel.action_requested.connect(self._on_clipboard_action)
-        QApplication.clipboard().dataChanged.connect(self._on_clipboard_changed)
 
         self._overlay: SetupOverlay | None = None
         self._ready = self._check_config()
@@ -2438,9 +2345,6 @@ class MainWindow(QMainWindow):
             cw.height() - ph - 28,
             pw, ph,
         )
-        # Clipboard panel — bottom-center
-        if hasattr(self, '_clipboard_panel') and self._clipboard_panel.isVisible():
-            self._position_clipboard_panel()
         # Quick drawer — reposition if open
         if hasattr(self, '_quick_drawer') and self._quick_drawer.isVisible():
             self._position_quick_drawer()
@@ -3232,35 +3136,6 @@ class MainWindow(QMainWindow):
         ov.show()
         ov.raise_()
         self._plugin_manager_overlay = ov   # keep a reference so it isn't GC'd
-
-    # ── Clipboard intelligence ───────────────────────────────────────────────────
-
-    def _on_clipboard_changed(self):
-        try:
-            text = QApplication.clipboard().text().strip()
-            if len(text) >= 10:
-                self._clipboard_sig.emit(text)
-        except Exception:
-            pass
-
-    def _show_clipboard_panel(self, text: str):
-        self._clipboard_panel.show_clipboard(text)
-        self._position_clipboard_panel()
-
-    def _position_clipboard_panel(self):
-        cw = self.centralWidget()
-        pw = ClipboardPanel._W
-        ph = self._clipboard_panel.sizeHint().height() or ClipboardPanel._H
-        x = (cw.width() - pw) // 2
-        y = cw.height() - ph - 6
-        self._clipboard_panel.setGeometry(x, y, pw, ph)
-        self._clipboard_panel.raise_()
-
-    def _on_clipboard_action(self, cmd: str):
-        if self.on_text_command:
-            threading.Thread(target=self.on_text_command, args=(cmd,), daemon=True).start()
-
-    # ────────────────────────────────────────────────────────────────────────────
 
     def _do_interrupt(self):
         if self.on_interrupt:

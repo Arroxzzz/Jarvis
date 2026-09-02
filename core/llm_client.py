@@ -47,20 +47,33 @@ _DEFAULTS = {
 
 # Modelos 100% gratuitos no OpenRouter, por categoria de tarefa.
 # Ordem = prioridade de fallback (primeiro indisponível/rate-limited → tenta o próximo).
+# NOTA: validar disponibilidade real em openrouter.ai/models?max_price=0
+# antes do deploy — catálogo :free do OpenRouter muda com frequência.
 FREE_MODELS: dict[str, list[str]] = {
     "reasoning": [
         "deepseek/deepseek-r1:free",
-        "qwen/qwen-2.5-72b-instruct:free",
         "meta-llama/llama-3.3-70b-instruct:free",
+        "qwen/qwen-2.5-72b-instruct:free",
     ],
     "code": [
         "qwen/qwen-2.5-coder-32b-instruct:free",
         "deepseek/deepseek-chat:free",
+        "nvidia/llama-3.1-nemotron-70b-instruct:free",
+    ],
+    "vision": [
+        "meta-llama/llama-3.2-90b-vision-instruct:free",
+        "meta-llama/llama-3.2-11b-vision-instruct:free",
+        "qwen/qwen-2-vl-7b-instruct:free",
+    ],
+    "search": [
         "meta-llama/llama-3.3-70b-instruct:free",
+        "qwen/qwen-2.5-72b-instruct:free",
+        "deepseek/deepseek-chat:free",
     ],
     "general": [
         "meta-llama/llama-3.3-70b-instruct:free",
         "deepseek/deepseek-chat:free",
+        "qwen/qwen-2.5-72b-instruct:free",
     ],
 }
 

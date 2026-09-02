@@ -1,6 +1,7 @@
 import platform as _platform
 import subprocess as _subprocess
 import sys as _sys
+import random
 
 # ── Make stdout/stderr UTF-8 tolerant ────────────────────────────────────────
 # On non-UTF-8 Windows consoles (cp1254/cp1252/cp936...) any print() containing
@@ -86,7 +87,7 @@ def get_base_dir():
 BASE_DIR        = get_base_dir()
 API_CONFIG_PATH = BASE_DIR / "config" / "api_keys.json"
 PROMPT_PATH     = BASE_DIR / "core" / "prompt.txt"
-LIVE_MODEL          = "models/gemini-2.5-flash-native-audio-preview-12-2025"
+LIVE_MODEL          = "models/gemini-3.1-flash-live-preview"   # substitui preview 2.5 em descontinuação — menor latência, thinkingLevel=minimal por padrão
 CHANNELS            = 1
 SEND_SAMPLE_RATE    = 16000
 RECEIVE_SAMPLE_RATE = 24000
@@ -108,6 +109,13 @@ def _load_system_prompt() -> str:
         )
 
 _CTRL_RE = re.compile(r"<ctrl\d+>", re.IGNORECASE)
+
+_Cancel_PHRASES = [
+    "Processos interrompidos, Senhor. Errou alguma coisa?",
+    "Interrompido, Senhor. Falei demais?",
+    "Cancelado, Senhor. Como deseja prosseguir?",
+]
+
 
 def _clean_transcript(text: str) -> str:    
     text = _CTRL_RE.sub("", text)
@@ -616,6 +624,7 @@ class JarvisLive:
         self._active_tool_tasks: list[asyncio.Task] = []
         self._active_cancel_events: list[threading.Event] = []   # cancelamento cooperativo (dev_agent etc.)
         self._boot_greeted: bool = False
+        self._last_turn_activity: float = time.monotonic()   # watchdog anti-travamento de mic
         self._phone_relay_task: asyncio.Task | None = None
 
         self._enhanced_live = True  # affective dialog + proactive audio; auto-disabled if the server rejects them
@@ -726,6 +735,7 @@ class JarvisLive:
     def interrupt(self) -> None:
         """Stop JARVIS mid-speech: cancel running tools (task + cooperative flag), drain audio."""
         self._interrupted = True
+        had_active = bool(self._active_tool_tasks) or bool(self._active_cancel_events)
         for t in self._active_tool_tasks:
             if not t.done():
                 t.cancel()
@@ -746,6 +756,8 @@ class JarvisLive:
         if self._turn_done_event:
             self._turn_done_event.clear()
         self.ui.write_log("SYS: Interrupted — listening...")
+        if had_active:
+            self.speak(random.choice(_Cancel_PHRASES))
 
     def speak(self, text: str):
         if not self._loop or not self.session:
@@ -1111,6 +1123,7 @@ class JarvisLive:
                 async for response in self.session.receive():
 
                     if response.data:
+                        self._last_turn_activity = time.monotonic()
                         if self._interrupted:
                             pass  # discard: interrupted
                         else:
@@ -1138,6 +1151,7 @@ class JarvisLive:
                                 self._last_user_speech = time.monotonic()
 
                         if sc.turn_complete:
+                            self._last_turn_activity = time.monotonic()
                             if self._turn_done_event:
                                 self._turn_done_event.set()
 
@@ -1471,6 +1485,18 @@ class JarvisLive:
 
     # ── System monitor ──────────────────────────────────────────────────────────
 
+    async def _turn_watchdog(self) -> None:
+        """Evita 'surdez' permanente do microfone: se turn_done_event ficar
+        preso (sem turn_complete/áudio) por >15s, força reset do gate de
+        áudio de entrada — protege contra hang do modelo Live."""
+        while True:
+            await asyncio.sleep(5)
+            if self._turn_done_event and not self._turn_done_event.is_set():
+                if time.monotonic() - self._last_turn_activity > 15:
+                    print("[JARVIS] ⚠️ Turn travado >15s — forçando reset do microfone")
+                    self._turn_done_event.set()
+                    self._last_turn_activity = time.monotonic()
+
     async def _run_system_monitor(self) -> None:
         """Background task: voice alerts when metrics exceed thresholds."""
         while True:
@@ -1659,6 +1685,7 @@ class JarvisLive:
                     self._vision_busy          = False
                     self._vision_last_time     = 0.0
                     self._interrupted          = False
+                    self._last_turn_activity   = time.monotonic()
 
                     print("[JARVIS] Connected.")
                     self.ui.set_state("LISTENING")
@@ -1675,6 +1702,7 @@ class JarvisLive:
                     tg.create_task(self._receive_audio())
                     tg.create_task(self._play_audio())
                     tg.create_task(self._run_system_monitor())
+                    tg.create_task(self._turn_watchdog())
                     tg.create_task(self._run_background_monitor())
                     tg.create_task(self._run_proactive_mode())
                     if self._dashboard:
