@@ -1,6 +1,4 @@
-Claro, Senhor. Abaixo está o **README.md completo**, já pronto para copiar e colar.
 
-```markdown
 # J.A.R.V.I.S.
 
 ### Just A Rather Very Intelligent System
