@@ -87,7 +87,17 @@ def get_base_dir():
 BASE_DIR        = get_base_dir()
 API_CONFIG_PATH = BASE_DIR / "config" / "api_keys.json"
 PROMPT_PATH     = BASE_DIR / "core" / "prompt.txt"
-LIVE_MODEL          = "models/gemini-3.1-flash-live-preview"   # substitui preview 2.5 em descontinuação — menor latência, thinkingLevel=minimal por padrão
+
+# Candidatos estáticos — usados apenas se a descoberta dinâmica falhar
+# (ex: sem rede no boot). Ordem = preferência (mais recente/estável primeiro).
+LIVE_MODEL_FALLBACKS = [
+    "models/gemini-2.0-flash-live-001",
+    "models/gemini-2.5-flash-native-audio-preview-09-2025",
+    "models/gemini-2.0-flash-exp",
+]
+LIVE_MODEL = LIVE_MODEL_FALLBACKS[0]
+_LIVE_MODEL_CACHE_KEY = "live_model_id_cache"
+
 CHANNELS            = 1
 SEND_SAMPLE_RATE    = 16000
 RECEIVE_SAMPLE_RATE = 24000
@@ -108,6 +118,50 @@ def _load_system_prompt() -> str:
             "Never simulate or guess results — always call the appropriate tool."
         )
 
+
+def _read_config() -> dict:
+    try:
+        return json.loads(API_CONFIG_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def _write_config_key(key: str, value) -> None:
+    try:
+        data = _read_config()
+        data[key] = value
+        API_CONFIG_PATH.write_text(json.dumps(data, indent=4), encoding="utf-8")
+    except Exception as e:
+        print(f"[JARVIS] ⚠️ Config write failed ({key}): {e}")
+
+
+def _discover_live_models(api_key: str) -> list[str]:
+    """
+    Consulta client.models.list() e retorna todos os model IDs que suportam
+    bidiGenerateContent (Live API), ordenados com preferência por 'flash'/'live'
+    no nome. Retorna [] em qualquer falha — NUNCA levanta exceção.
+    """
+    found: list[str] = []
+    try:
+        client = genai.Client(api_key=api_key, http_options={"api_version": "v1beta"})
+        for m in client.models.list():
+            name = getattr(m, "name", "") or ""
+            actions = (
+                getattr(m, "supported_actions", None)
+                or getattr(m, "supported_generation_methods", None)
+                or []
+            )
+            actions_str = " ".join(str(a) for a in actions).lower()
+            if "bidigeneratecontent" in actions_str:
+                found.append(name)
+        found.sort(key=lambda n: (0 if "live" in n.lower() else 1, "exp" in n.lower(), n))
+        if found:
+            print(f"[JARVIS] 🔍 Live models descobertos: {found}")
+    except Exception as e:
+        print(f"[JARVIS] ⚠️ Descoberta de modelos Live falhou: {e}")
+    return found
+
+
 _CTRL_RE = re.compile(r"<ctrl\d+>", re.IGNORECASE)
 
 _Cancel_PHRASES = [
@@ -115,6 +169,20 @@ _Cancel_PHRASES = [
     "Interrompido, Senhor. Falei demais?",
     "Cancelado, Senhor. Como deseja prosseguir?",
 ]
+
+
+def _validate_gemini_key(api_key: str) -> bool:
+    """Ping REST leve com modelo padrão (NÃO o Live model) — só retorna False
+    para erro de chave real; qualquer outro erro (rede, quota) não bloqueia boot."""
+    try:
+        client = genai.Client(api_key=api_key)
+        client.models.generate_content(model="gemini-2.0-flash", contents="ping")
+        return True
+    except Exception as e:
+        msg = str(e)
+        if "API key not valid" in msg or "API_KEY_INVALID" in msg:
+            return False
+        return True  # erro não relacionado à chave — não bloquear
 
 
 def _clean_transcript(text: str) -> str:    
@@ -624,10 +692,13 @@ class JarvisLive:
         self._active_tool_tasks: list[asyncio.Task] = []
         self._active_cancel_events: list[threading.Event] = []   # cancelamento cooperativo (dev_agent etc.)
         self._boot_greeted: bool = False
+        self._pending_cancel_phrase: str | None = None   # frase de cancelamento adiada até o tool_response sair
         self._last_turn_activity: float = time.monotonic()   # watchdog anti-travamento de mic
         self._phone_relay_task: asyncio.Task | None = None
 
         self._enhanced_live = True  # affective dialog + proactive audio; auto-disabled if the server rejects them
+        self._live_candidates: list[str] = []   # preenchido em _resolve_live_model()
+        self._live_idx = 0                      # índice do candidato atual em uso
         _core_names = {t["name"] for t in TOOL_DECLARATIONS}
         self._plugin_registry = discover_plugins(
             plugins_dir=Path(__file__).resolve().parent / "plugins",
@@ -757,6 +828,12 @@ class JarvisLive:
             self._turn_done_event.clear()
         self.ui.write_log("SYS: Interrupted — listening...")
         if had_active:
+            # NÃO fala agora: o servidor ainda espera o tool_response da
+            # function call cancelada. Enviar um novo turno antes disso
+            # derruba o WebSocket com 1007 "invalid argument". A frase é
+            # entregue por _receive_audio logo após o tool_response sair.
+            self._pending_cancel_phrase = random.choice(_Cancel_PHRASES)
+        else:
             self.speak(random.choice(_Cancel_PHRASES))
 
     def speak(self, text: str):
@@ -1077,27 +1154,57 @@ class JarvisLive:
         )
 
     async def _send_realtime(self):
+        _sent = 0
+        _last_log = time.monotonic()
         while True:
             msg = await self.out_queue.get()
-            await self.session.send_realtime_input(media=msg)
+            if not self.session:
+                continue
+            try:
+                await self.session.send_realtime_input(
+                    audio=types.Blob(
+                        data=msg["data"],
+                        mime_type=msg.get("mime_type", f"audio/pcm;rate={SEND_SAMPLE_RATE}"),
+                    )
+                )
+                _sent += 1
+            except Exception as e:
+                print(f"[JARVIS] ⚠️ Falha ao enviar chunk de áudio: {e}")
+                continue
+            now = time.monotonic()
+            if now - _last_log > 5.0:
+                print(f"[JARVIS] 🎙️ {_sent} chunks de áudio enviados nos últimos ~5s")
+                _sent = 0
+                _last_log = now
+
+    def _enqueue_mic_chunk(self, data: bytes) -> None:
+        try:
+            self.out_queue.put_nowait(
+                {"data": data, "mime_type": f"audio/pcm;rate={SEND_SAMPLE_RATE}"}
+            )
+        except asyncio.QueueFull:
+            pass  # descarta o frame mais antigo em vez de travar o produtor de áudio
 
     async def _listen_audio(self):
         print("[JARVIS] 🎤 Mic started")
         loop = asyncio.get_event_loop()
 
         def callback(indata, frames, time_info, status):
+            if status:
+                print(f"[JARVIS] ⚠️ Mic status: {status}")
             with self._speaking_lock:
                 jarvis_speaking = self._is_speaking
-            # Bloqueia reenvio de áudio enquanto um turno anterior ainda não
-            # foi finalizado (turn_complete pendente) — evita que o VAD do
-            # Gemini processe a mesma fala como dois turnos distintos.
-            turn_pending = bool(self._turn_done_event and not self._turn_done_event.is_set())
-            if not jarvis_speaking and not self.ui.muted and not self._phone_active and not turn_pending:
+            # O VAD do próprio Gemini Live já lida com sobreposição de turnos.
+            # Gating por turn_done_event foi removido para evitar silenciar o
+            # mic quando uma conexão cai no meio de uma resposta.
+            if jarvis_speaking or self.ui.muted or self._phone_active:
+                return
+            try:
                 data = indata.tobytes()
-                loop.call_soon_threadsafe(
-                    self.out_queue.put_nowait,
-                    {"data": data, "mime_type": "audio/pcm"}
-                )
+            except Exception as e:
+                print(f"[JARVIS] ⚠️ Mic callback error: {e}")
+                return
+            loop.call_soon_threadsafe(self._enqueue_mic_chunk, data)
 
         try:
             with sd.InputStream(
@@ -1240,6 +1347,13 @@ class JarvisLive:
                         await self.session.send_tool_response(
                             function_responses=fn_responses
                         )
+                        if self._pending_cancel_phrase:
+                            _phrase = self._pending_cancel_phrase
+                            self._pending_cancel_phrase = None
+                            await self.session.send_client_content(
+                                turns={"parts": [{"text": _phrase}]},
+                                turn_complete=True,
+                            )
         except Exception as e:
             print(f"[JARVIS] ❌ Recv: {e}")
             traceback.print_exc()
@@ -1647,12 +1761,57 @@ class JarvisLive:
 
     # ── main loop ───────────────────────────────────────────────────────────
 
+    async def _resolve_live_model(self) -> None:
+        """
+        Monta self._live_candidates: prioriza cache salvo (evita chamar
+        models.list() em todo boot), depois descoberta dinâmica, depois
+        fallback estático. Nunca deixa a lista vazia.
+        """
+        api_key = _get_api_key()
+        cached = _read_config().get(_LIVE_MODEL_CACHE_KEY)
+
+        discovered = await asyncio.to_thread(_discover_live_models, api_key)
+
+        candidates: list[str] = []
+        if cached:
+            candidates.append(cached)
+        for m in discovered:
+            if m not in candidates:
+                candidates.append(m)
+        for m in LIVE_MODEL_FALLBACKS:
+            if m not in candidates:
+                candidates.append(m)
+
+        self._live_candidates = candidates
+        self._live_idx = 0
+        print(f"[JARVIS] 🎯 Live model em uso: {candidates[0]}  (+{len(candidates)-1} fallback(s))")
+
+    def _current_live_model(self) -> str:
+        if not self._live_candidates:
+            return LIVE_MODEL_FALLBACKS[0]
+        return self._live_candidates[self._live_idx % len(self._live_candidates)]
+
+    def _advance_live_model(self) -> None:
+        """Rotaciona para o próximo candidato após rejeição 1007/1008."""
+        if len(self._live_candidates) > 1:
+            self._live_idx = (self._live_idx + 1) % len(self._live_candidates)
+        self.ui.write_log(f"SYS: Tentando model id alternativo: {self._current_live_model()}")
+
     async def run(self):
         self._loop = asyncio.get_event_loop()
 
         # Dashboard agora é LAZY — só sobe (e só mexe no firewall) quando o
         # usuário clica em "Remote Control". Ver _ensure_dashboard_started().
         self._dashboard = None
+
+        if not await asyncio.to_thread(_validate_gemini_key, _get_api_key()):
+            self.ui.write_log("ERR: API key invalid — please re-enter your key.")
+            self.ui.set_state("SLEEPING")
+            self.ui.prompt_reconfig()
+            while not self.ui._win._ready:
+                await asyncio.sleep(1)
+
+        await self._resolve_live_model()
 
         while True:
             try:
@@ -1667,9 +1826,10 @@ class JarvisLive:
                     api_key=_get_api_key(),
                     http_options={"api_version": "v1alpha" if self._enhanced_live else "v1beta"}
                 )
+                _live_model = self._current_live_model()
 
                 async with (
-                    client.aio.live.connect(model=LIVE_MODEL, config=config) as session,
+                    client.aio.live.connect(model=_live_model, config=config) as session,
                     asyncio.TaskGroup() as tg,
                 ):
                     self.session          = session
@@ -1690,6 +1850,8 @@ class JarvisLive:
                     print("[JARVIS] Connected.")
                     self.ui.set_state("LISTENING")
                     self.ui.write_log("SYS: JARVIS online.")
+                    _write_config_key(_LIVE_MODEL_CACHE_KEY, _live_model)
+                    self._conn_backoff = 3
 
                     if not self._boot_greeted:
                         self._boot_greeted = True
@@ -1742,8 +1904,8 @@ class JarvisLive:
                     )
                     continue
 
-                # Invalid API key — stop hammering the API, prompt re-configuration
-                if "API key not valid" in err_str or "1007" in err_str:
+                # Chave inválida de fato — único caso que deve forçar reconfig.
+                if "API key not valid" in err_str or "API_KEY_INVALID" in err_str:
                     self.ui.write_log("ERR: API key invalid — please re-enter your key.")
                     self.ui.set_state("SLEEPING")
                     self.ui.prompt_reconfig()
@@ -1751,6 +1913,29 @@ class JarvisLive:
                         await asyncio.sleep(1)
                     print("[JARVIS] New API key saved — reconnecting...")
                     _conn_backoff = 3
+                    continue
+
+                # 1007/1008 = fechamento de WebSocket por payload ou model id
+                # rejeitado pelo servidor Live (não é prova de chave inválida).
+                if "1007" in err_str or "1008" in err_str or "not found for API version" in err_str:
+                    self.ui.write_log(
+                        f"ERR: Live rejeitada ({'1008' if '1008' in err_str else '1007'}) — "
+                        f"model='{self._current_live_model()}'. Chave NÃO foi resetada."
+                    )
+                    # 1ª tentativa: cai o affective dialog (v1alpha → v1beta) mantendo
+                    # o mesmo model id — cobre o caso mais comum (feature, não modelo).
+                    if self._enhanced_live:
+                        self._enhanced_live = False
+                        self.ui.write_log("SYS: Reconectando em v1beta (sem affective dialog).")
+                        continue
+                    # 2ª+: modelo em si é o problema — roda para o próximo candidato.
+                    self._advance_live_model()
+                    if self._live_idx == 0:
+                        # Deu a volta em todos os candidatos sem sucesso — refaz a
+                        # descoberta (catálogo pode ter mudado) antes de tentar de novo.
+                        await self._resolve_live_model()
+                    self._enhanced_live = True   # tenta o próximo candidato com features completas de novo
+                    self._conn_backoff = min(getattr(self, "_conn_backoff", 3) * 2, 30)
                     continue
 
                 # Network / timeout errors — log clearly and back off
@@ -1769,6 +1954,12 @@ class JarvisLive:
                     self._conn_backoff = 3
             finally:
                 self.session = None
+                # Se a conexão caiu antes de qualquer conversa real, a
+                # saudação de boot foi "consumida" numa tentativa fracassada
+                # (ex: 1007/1008 imediato) e nunca chegou a ser dita —
+                # libera para tentar de novo na próxima reconexão estável.
+                if self._boot_greeted and len(self._session_log) == 0:
+                    self._boot_greeted = False
                 # Only save if there was a real conversation (≥3 turns)
                 if len(self._session_log) >= 3:
                     asyncio.create_task(self._save_session_summary())

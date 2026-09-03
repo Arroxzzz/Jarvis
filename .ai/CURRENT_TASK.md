@@ -1,37 +1,51 @@
-# CURRENT_TASK — Sprint 4 ENCERRADA / Sprint 5 EM PLANEJAMENTO
+# CURRENT_TASK — Sprint 5 EM ANDAMENTO — PONTO 0 É A PRÓXIMA AÇÃO
 
-## Sprint 4 — Resultado dos Testes Práticos
-**Status:** [ENCERRADA — 1 pendência aberta]
+## Contexto de handoff (sessão anterior atingiu limite de contexto)
+Ler `.ai/PROJECT_STATE.md` INTEIRO antes de qualquer código — contém o
+diagnóstico completo e a especificação técnica exata do que fazer.
+Este arquivo é só o resumo acionável.
 
-1. Boot & Saudação Proativa — ✓ SUCESSO
-2. Fuso Horário BRT (zoneinfo) — ✓ SUCESSO
-3. Cancelamento ESC do dev_agent — ⚠️ PARCIAL
-   Backend interrompe corretamente (threading.Event cooperativo), mas falta
-   feedback verbal imediato. AÇÃO: `main.py::interrupt()` deve disparar
-   `self.speak()` com frase de personalidade ao cancelar, ANTES de aguardar
-   a tool finalizar.
-4. Latência do Live API — ❌ GARGALO CRÍTICO CONFIRMADO
-   `gemini-2.5-flash-native-audio-preview-12-2025` apresentando 5-40s de
-   latência + áudio picotado. CORREÇÃO DE ROTA (ver PROJECT_STATE.md):
-   `gemini-1.5-flash` é TECNICAMENTE INVIÁVEL (não suporta Live API, série
-   1.5 desligada). Migração real: `gemini-3.1-flash-live-preview` (modelo
-   Live recomendado atual, substitui a linha 2.5 native-audio em
-   descontinuação).
-5. Clipboard listener — DECISÃO: remoção total (não apenas desativação por
-   config). Ver justificativa em PROJECT_STATE.md.
+## Estado atual confirmado por teste real (Senhor Paulo)
+- ✅ Latência de voz: 1-2s (objetivo da sprint CUMPRIDO).
+- ✅ Microfone: 78+ chunks enviados continuamente, sem falha.
+- ✅ Conexão Live estabelece e permanece de pé durante uso normal.
+- ❌ ESC durante tool ativa → 1007, derruba socket.
+- ❌ Texto digitado na UI durante sessão ativa → 1007, derruba socket.
+- ❌ Saudação de boot não fala.
+- ❌ ACTIVITY LOG poluído com tracebacks crus.
 
-## Sprint 5 — Roteamento por Especialidade (PLANEJADA)
-- Expandir `FREE_MODELS` em `core/llm_client.py` com categoria `"search"`
-  além de `general`/`code`/`reasoning`.
-- Roteamento continua baseado no parâmetro `task_type` já existente na tool
-  `deep_reasoning` — SEM classificador LLM adicional (evita round-trip extra
-  de latência).
-- Avaliar fetch dinâmico de `openrouter.ai/api/v1/models` (filtro
-  `pricing.prompt==0`) com cache TTL, para não repetir o problema de modelo
-  descontinuado sem aviso (mesma causa-raiz do item 4 desta sprint).
+## PRÓXIMA AÇÃO IMEDIATA (sem precisar perguntar nada ao usuário)
+Implementar o PONTO 0 conforme especificação completa em
+`.ai/PROJECT_STATE.md` seção "⭐ ESPECIFICAÇÃO DO PONTO 0": adicionar
+`asyncio.Lock` em `JarvisLive`, criar métodos seguros de envio
+(`_safe_send_content` / equivalente para tool_response), migrar todos os
+pontos de chamada listados na especificação. Isso resolve ESC, texto
+digitado, e saudação de boot simultaneamente (mesma causa raiz).
 
-**Critério de aceite Sprint 5:**
-- ESC gera resposta falada em <1s após cancelamento
-- Sessão Live estável com latência 1-3s consistente
-- Clipboard 100% removido do código (zero referências residuais)
-- `FREE_MODELS["code"]` validado contra catálogo gratuito atual do OpenRouter
+Gerar diffs cirúrgicos "antes/depois" para `main.py`, sem reescrever
+arquivo inteiro, seguindo o padrão de todas as rodadas anteriores desta
+sessão.
+
+## Depois do Ponto 0 (ordem já definida, não reordenar)
+1. Testar: ESC durante tool longa, texto digitado durante fala ativa, boot
+   do zero confirmando saudação única.
+2. Sanitização de logs — camada mínima em `main.py` primeiro (trocar
+   `write_log` de erros crus por `logging.exception()` → `jarvis.log`).
+3. Menu de seleção de dispositivo de mic/output na UI (`ui.py`), aplicado
+   só no boot/reconexão, sem hot-swap em runtime na v1.
+
+## Decisões já fechadas nesta sprint — NÃO reabrir sem novo motivo concreto
+- Model ID Live: manter descoberta dinâmica + cache. NÃO fixar hardcoded.
+  (Ver justificativa completa em PROJECT_STATE.md, Ponto 3.)
+- Logs: não migrar todos os `actions/*.py` de uma vez — só `main.py` por
+  enquanto, é de onde vêm 100% dos tracebacks observados.
+- Seleção de device de áudio: sem hot-swap em runtime na v1.
+
+## Critério de aceite Sprint 5 (atualizado)
+- Sessão Live conecta e permanece estável sem loop de reconexão.
+- ESC cancela tool ativa sem derrubar o socket (1007).
+- Texto digitado na UI funciona durante qualquer estado de sessão.
+- Saudação de boot é falada uma única vez por sessão bem-sucedida.
+- ACTIVITY LOG não exibe tracebacks crus ao usuário final.
+- `FREE_MODELS["code"]` validado contra catálogo gratuito atual do
+  OpenRouter (pendência antiga, não relacionada a esta rodada, ainda aberta).

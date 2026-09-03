@@ -1,177 +1,247 @@
-# PROJECT_STATE — JARVIS MARK LI — FINAL (2026-09-02)
+# PROJECT_STATE — JARVIS MARK LI — HANDOFF SPRINT 5 (2026-09-02)
 
-## Contexto
-Projeto restaurado de backup. Usuário: Senhor Paulo. Idioma obrigatório: PT-BR.
+## ⚠️ LEIA ISTO PRIMEIRO — Handoff para a próxima sessão do Claude
 
-## Funcionalidades Operacionais Estáveis
-- Gemini Live API (áudio nativo, function calling, session_resumption) com arquitetura assíncrona segura
-- Sistema de plugins (auto-discovery em `plugins/`, isolamento de crash)
-  - Plugins corretos: `reminder_verbal.py`, `upload_video.py`, `pushup_counter.py` (todos em `plugins/` agora)
-- HUD PyQt6 (HudCanvas 60fps, MetricBar, LogWidget)
-- Dashboard remoto (FastAPI + AES-256 + QR pairing)
-- File processor multi-formato (pdf/docx/csv/audio/video/etc)
-- Browser control (Playwright, perfis reais)
-- Memory manager (long_term.json)
-- **Identidade PT-BR fixa** ("Senhor" incondicional, sem fallback turco/inglês)
-- **Hotkey F4 global** (pynput, funciona minimizado/sem foco)
-- **Modo Fantasma / Bandeja** (pausa HUD/métricas, restauração via tray)
-- **OpenRouter gratuito** (provider com modelos :free por categoria: reasoning/code/general)
-- **Arquitetura assíncrona segura** (tool calls paralelas com timeout, cancelamento real, sem deadlock)
-
-## Arquitetura Assíncrona Final (Sprint 3)
-
-### Tool Execution Model
-- `main.py::_execute_tool(fc)` agora roda múltiplas function calls em paralelo via `asyncio.gather(*tasks)`
-- Cada tool call envolvido em `_bounded(loop, fn, timeout, label)` com `asyncio.wait_for()` timeout individual
-- Timeouts configurados por tool: exemplos: 20s `open_app`, 90s `code_helper`, 30s `browser_control`
-- Orçamento total rígido protege sessão de voz de travamento
-
-### Cancelamento & Interrupção
-- `JarvisLive.interrupt()` cancela **todas as tarefas ativas** via `t.cancel()` em `self._active_tool_tasks`
-- Operação real-time; tarefas recebem `asyncio.CancelledError`
-- Drenagem de fila de áudio mantida; sessão continua responsiva
-
-### Modules Removed (Sprint 3)
-- ✓ Deletados: `core/stt.py`, `core/tts.py`, `core/hotkeys.py` (legados)
-- ✓ F4 global agora via pynput em `ui.py`
-- ✓ Validação grep: zero referências stale
-
-### Hardware Sensors Unified
-- **Novo:** `core/hw_sensors.py` centraliza GPU/temp (zero subprocess)
-- GPU: pynvml → ctypes nvml.dll/libnvidia-ml
-- Temp: psutil sensors → wmi (Windows)
-- Importado por `ui.py` e `actions/system_monitor.py`
-
-## Funcionalidades a Restabelecer
-1. **Morning Briefing automático** — implementar toggle retorno automático no dashboard.
-2. **Dashboard Web Expandido** — login, painel de controle remoto, sockets bidirecionais.
-3. **Otimização Gaming** — perfil de poder com redução de polling em fullscreen.
+Este handoff existe porque a sessão anterior atingiu limite de contexto no
+meio da Sprint 5. TODO o diagnóstico abaixo já foi validado por testes reais
+do Senhor Paulo — não é suposição, é fato observado em log. Não redescubra
+o que já está aqui; execute o Plano de Ação na ordem especificada.
 
 ---
 
-## INCIDENTE SPRINT 2 — RESOLVIDO
+## RESUMO EXECUTIVO DA SPRINT 5
 
-## ESTABILIZAÇÃO SPRINT 3 — CONCLUÍDA
+**Objetivo original:** latência de resposta de voz entre 1-3s.
+**Resultado:** ALCANÇADO E CONFIRMADO — 1-2s, com 78+ chunks de áudio
+enviados continuamente e sem perda de frame. O objetivo-fim da sprint foi
+cumprido; o que resta é estabilização de concorrência, não performance.
 
-### Correções implementadas
-- Eliminação de módulos obsoletos: STT, TTS e hotkeys foram removidos do projeto.
-- `main.py`: tool calls longas passaram a usar wrapper `_bounded()` com timeout, `asyncio.gather()` para execução paralela e cancelamento real via `interrupt()`.
-- `actions/screen_processor.py`: mantido apenas fluxo de captura de imagem; sessão de visão ghost removida.
-- `main.py`: deadlock de `_vision_busy` corrigido com reset em erro e proteção por cooldown.
-- `actions/game_updater.py`: correção de shadowing de `platform` e limpeza de comportamento duplicado.
-- `core/hw_sensors.py`: centralização do monitoramento de hardware para CPU/GPU.
-- `core/llm_client.py`: remoção de blocos mortos e manutenção do provider OpenRouter livre.
+**Efeito colateral do trabalho:** trocar o model ID Live expôs uma cadeia de
+3 bugs pré-existentes e adormecidos (nunca testados antes desta sprint).
+Cada correção revelou o próximo, na seguinte ordem real de causas:
 
-### Contexto
-Durante implementação de `deep_reasoning` (fallback Gemini Live → OpenRouter),
-descoberto e corrigido travamento crítico na sessão de voz.
+1. `LIVE_MODEL` fixo apontava para um ID inexistente/desatualizado →
+   `client.aio.live.connect()` falhava com 1007/1008.
+2. O handler de erro tratava QUALQUER 1007/1008 como "API key inválida" →
+   resetava config e abria tela de setup, mascarando a causa real (1).
+3. Resolvido (1)+(2) → surgiu erro novo: `send_realtime_input(media=...)`
+   usa parâmetro descontinuado pelo servidor Google ("media_chunks is
+   deprecated. Use audio, video, or text instead").
+4. Resolvido (3) → surgiu erro novo: `mime_type="audio/pcm"` sem sample
+   rate explícito era rejeitado ("1007 Request contains an invalid
+   argument") ao usar o campo tipado `audio=types.Blob(...)`. Corrigido
+   para `audio/pcm;rate=16000`.
+5. Resolvido (4) → restava um deadlock de lógica (não de protocolo): gate
+   `turn_pending` em `_listen_audio::callback` silenciava o mic sempre que
+   `_turn_done_event` ficasse preso por uma conexão caída no meio de uma
+   resposta. Removido — o VAD do próprio Gemini Live já lida com isso.
+6. Resolvido (5) → MIC E LATÊNCIA CONFIRMADOS FUNCIONANDO (1-2s, 78+ chunks).
+7. Bug NOVO e ainda ABERTO nesta sessão: qualquer `send_client_content` ou
+   `send_tool_response` que colida no tempo com outra chamada ao `session`
+   derruba o socket com `1007 Request contains an invalid argument`.
+   Confirmado em DOIS cenários distintos e independentes:
+     - ESC durante uma tool ativa (`interrupt()` chamava `speak()` antes do
+       `send_tool_response` da task cancelada ser enviado).
+     - Texto digitado na UI (`_on_text_command`) durante outra atividade
+       de sessão em andamento.
+   **Diagnóstico consolidado:** não é mais um problema de payload/schema —
+   é FALTA DE SERIALIZAÇÃO no acesso ao objeto `session` do SDK
+   `google-genai`. Múltiplos pontos do código (`speak`, `interrupt`,
+   `_on_text_command`, `plugin_say`, o watchdog, `_receive_audio`) podem
+   chamar métodos do `session` a qualquer momento, de threads/tasks
+   diferentes, sem nenhum mutex/lock protegendo o WebSocket. Ver ESPECIFICAÇÃO
+   DO PONTO 0 abaixo.
 
-### Bugs Identificados
+**Sintomas colaterais ainda não resolvidos (são CONSEQUÊNCIA do item 7, não
+bugs novos e independentes):**
+   - Saudação de boot não é falada. Causa provável: `_send_boot_greeting()`
+     colide com outra chamada concorrente ao `session` durante os primeiros
+     segundos de conexão (watchdog, dashboard, etc.) e é vítima do mesmo 1007.
+     Correção anterior (`_boot_greeted` resetado quando `session_log` vazio)
+     já foi aplicada e ajuda no caso de "conexão caiu antes de qualquer
+     conversa", mas NÃO resolve o caso de colisão em conexão que sobrevive.
+   - ACTIVITY LOG poluído com tracebacks/erros crus da API — não é bug de
+     lógica, é falta de sanitização de log (ver Ponto 2 do plano).
 
-**Bug 1: deep_reasoning não forçava provider OpenRouter**
-- `call_llm_text()` caía no branch Ollama ao ler config local (`get_llm_provider()` → "ollama")
-- Tentava `subprocess.Popen(["ollama", "serve"])` ao invés de chamar OpenRouter
-- Retries longos (até 120s) esperando Ollama iniciar
+---
 
-**Bug 2 (CRÍTICO): travamento de sessão de voz**
-- `main.py::_receive_audio` executava `await self._execute_tool(fc)` **sincronamente** dentro do loop de recepção Gemini Live
-- Quando `deep_reasoning` ficava preso em timeout (até 120s × 3 modelos em cascata ≈ 6 min), **nenhuma mensagem de áudio era processada**
-- Sessão inteira travava silenciosamente, exigindo restart manual do JARVIS
-- Gemini Live não conseguia enviar novas mensagens enquanto tool call pendente
+## ANÁLISE DE VIABILIDADE DOS 4 PONTOS DISCUTIDOS (decisão já tomada)
 
-### Correção Aplicada
+### Ponto 1 — Seleção de dispositivos de áudio (mic/output) na UI
+**Decisão: FAZER, prioridade BAIXA (depois da estabilização).**
+Overlay estilo `SetupOverlay`/`CustomizeOverlay` em `ui.py`, salva
+`input_device_index`/`output_device_index` em `config/api_keys.json`,
+aplicado via `sd.InputStream(device=idx, ...)` / `sd.RawOutputStream(device=idx, ...)`
+em `main.py`. NÃO fazer hot-swap em runtime na v1 — só seleção no boot,
+aplicada no próximo restart do stream (que já acontece a cada reconexão
+do `TaskGroup` em `JarvisLive.run()`). Complexidade real: baixa.
 
-**core/llm_client.py:**
-- `call_llm_text()` ganhou parâmetro `force_provider: str | None`
-  - Ignora `llm_provider` do config quando setado explicitamente
-  - Permite forçar OpenRouter independente do provedor local ativo (ollama/lmstudio)
-- `_auth_headers()` aceita `force_provider` como override de provider
-- Garante que modelos :free sejam chamados contra endpoint correto
+### Ponto 2 — Sanitização de logs (tracebacks → jarvis.log, não para UI)
+**Decisão: FAZER, prioridade MÉDIA — logo após o Ponto 0.**
+Fazer em duas camadas:
+1. Imediata: em `main.py`, trocar prints crus de traceback/erro de SDK que
+   hoje vazam para `self.ui.write_log()` por `logging.exception()` gravando
+   em arquivo `jarvis.log`. O vazamento observado vem do
+   `except BaseException as e:` no loop de reconexão de `JarvisLive.run()`,
+   que hoje escreve `err_str` cru na UI via `self.ui.write_log(...)`.
+2. Depois: módulo `core/logger.py` com `logging.RotatingFileHandler` para
+   arquivo + handler customizado que só repassa para `LogWidget` mensagens
+   curadas (prefixo `SYS:`/`You:`/nome do assistente). NÃO migrar todos os
+   `print()` de `actions/*.py` de uma vez — fora de escopo, baixo retorno
+   imediato; os tracebacks visíveis até agora vêm 100% de `main.py`.
 
-**main.py::deep_reasoning branch:**
-- `timeout=25` por chamada individual (modelo único)
-- `force_provider="openrouter"` explícito em cada `call_llm_text()`
-- `asyncio.wait_for(..., timeout=80)` envolvendo todo `run_in_executor()`
-  - Orçamento total rígido de ~80s no pior caso (cascata de 3 modelos)
-  - Mensagem de erro amigável em vez de travamento silencioso
-  - Não bloqueia sessão de voz além desse tempo
+### Ponto 3 — Model ID Live fixo vs. descoberta dinâmica
+**Decisão: MANTER a descoberta dinâmica com cache. NÃO fixar hardcoded.**
+Fixar reintroduziria exatamente o bug de origem desta sprint (Sprint 4 já
+fixou um ID que não existia). O mecanismo atual (`_resolve_live_model()`,
+`_discover_live_models()`, `_current_live_model()`, `_advance_live_model()`)
+já se comporta como "modelo fixo" no dia a dia — 1º boot descobre e testa
+candidatos, grava o vencedor em `config/api_keys.json["live_model_id_cache"]`;
+boots seguintes usam o cache DIRETO, sem round-trip a `models.list()`. Só
+refaz a descoberta se o candidato em cache falhar (1007/1008). Ou seja:
+já temos estabilidade de hardcode COM auto-recuperação a mudanças futuras
+de catálogo da Google. Nenhuma ação de código necessária neste ponto —
+está correto como está.
 
-**config/api_keys.json:**
-- `llm_provider`: "openrouter" (now default)
-- `llm_url`: "https://openrouter.ai/api/v1"
-- `llm_model`: "meta-llama/llama-3.3-70b-instruct:free"
-- `openrouter_api_key`: presente e válida
+### Ponto 4 — Saudação automática de boot
+**Decisão: NÃO tratar isoladamente — é sintoma do Ponto 0.**
+Assim que a serialização do `session` (Ponto 0) estiver implementada, a
+saudação deve voltar a funcionar sem nenhuma mudança de código adicional
+nela mesma. Se persistir falhando DEPOIS do Ponto 0 resolvido, aí sim
+investigar `_send_boot_greeting()` isoladamente.
 
-### Status
-- ✓ Correção código aplicada
-- ⏳ **AGUARDANDO RETESTE** (Senhor Paulo)
-  - Confirmar: resposta chega em até ~25-80s
-  - Confirmar: JARVIS continua respondendo após timeout/falha
-  - Confirmar: nenhum restart necessário (sessão de voz continua)
-  - Pendência: validar que `openrouter_api_key` é válida (sem ela, 401 esperado)
+---
 
-## Regras de Ouro
+## ⭐ ESPECIFICAÇÃO DO PONTO 0 — LOCK DE SERIALIZAÇÃO DO SESSION (PRIORIDADE ABSOLUTA)
+
+Este é o único item de código pendente com prioridade máxima. Especificação
+completa para a próxima sessão implementar sem precisar perguntar nada:
+
+### Problema exato
+`google.genai.live.AsyncSession` (o objeto `self.session` em `JarvisLive`)
+não é thread-safe nem coroutine-safe para chamadas concorrentes de
+`send_client_content()` / `send_tool_response()` / `send_realtime_input()`.
+Hoje esses métodos são chamados de múltiplos pontos sem nenhuma exclusão
+mútua:
+  - `_send_realtime()` (task contínua, chama `send_realtime_input` em loop)
+  - `_receive_audio()` (chama `send_tool_response` após tool calls, e
+    `send_client_content` para injeção de visão/imagem)
+  - `speak()` (chamado de qualquer lugar, inclusive de threads via
+    `asyncio.run_coroutine_threadsafe`, por `interrupt()`, `plugin_say()`,
+    `speak_error()`)
+  - `_on_text_command()` (thread da UI Qt, via `run_coroutine_threadsafe`)
+  - `_send_startup_briefing()`, `_send_boot_greeting()`,
+    `_run_system_monitor()`, `_run_background_monitor()`,
+    `_run_proactive_mode()`, `_process_dashboard_commands()` — todas
+    background tasks que também chamam `send_client_content`.
+
+Quando duas dessas chamadas colidem no tempo (ex: `send_tool_response`
+ainda em voo quando `speak()` dispara um `send_client_content` novo), o
+servidor Live rejeita com `1007 Request contains an invalid argument` e
+derruba o WebSocket inteiro — não é um erro recuperável por chunk, mata a
+sessão inteira e força reconexão completa.
+
+### Solução especificada
+1. Adicionar `self._session_lock = asyncio.Lock()` em `JarvisLive.__init__`.
+2. Criar um método único de saída para conteúdo de cliente, algo como:
+async def _safe_send_content(self, parts: list, turn_complete: bool = True) -> None:
+if not self.session:
+return
+async with self._session_lock:
+await self.session.send_client_content(
+turns={"parts": parts}, turn_complete=turn_complete
+)
+3. Método análogo para `send_tool_response` (mesmo lock).
+4. `send_realtime_input` (áudio contínuo do mic) é caso especial: NÃO deve
+   competir pelo mesmo lock que `send_client_content`/`send_tool_response`
+   com espera bloqueante longa, porque é chamado em alta frequência (a cada
+   chunk de ~64ms) e uma tool call pode demorar segundos. Duas opções a
+   avaliar na implementação:
+   a) Usar o MESMO lock, mas garantir que nenhuma seção crítica de
+      `send_client_content`/`send_tool_response` segure o lock por muito
+      tempo (elas são chamadas únicas, não deveriam demorar).
+   b) Lock separado apenas para conteúdo "de turno" (`send_client_content`
+      + `send_tool_response`), deixando `send_realtime_input` livre — o
+      áudio realtime não conflita com texto de turno no protocolo real,
+      o conflito observado foi especificamente entre chamadas de TURNO
+      concorrentes entre si (tool_response vs. speak vs. texto digitado).
+   **Recomendação da sessão anterior: opção (b)** — é mais cirúrgica e
+   não arrisca introduzir latência no áudio, que é o requisito #1 do
+   projeto (1-3s) e já está funcionando.
+5. Substituir TODOS os pontos de chamada direta a
+   `self.session.send_client_content(...)` e
+   `self.session.send_tool_response(...)` espalhados por `main.py` para
+   passar pelo(s) método(s) seguro(s) acima. Locais confirmados que
+   precisam ser migrados (buscar por `send_client_content` e
+   `send_tool_response` em `main.py`):
+   - `plugin_say()`
+   - `_on_text_command()`
+   - `speak()`
+   - dentro de `_execute_tool()` (branch `shutdown_jarvis`)
+   - dentro de `_receive_audio()` (injeção de visão + fluxo de tool_response)
+   - `_send_startup_briefing()` (fase 1 e fase 2)
+   - `_send_boot_greeting()`
+   - `_run_system_monitor()`
+   - `_run_background_monitor()`
+   - `_run_proactive_mode()`
+   - `_process_dashboard_commands()`
+6. Consequência esperada: ESC durante tool ativa, texto digitado durante
+   qualquer atividade de sessão, e saudação de boot devem passar a
+   funcionar sem 1007, SEM precisar de nenhum patch adicional específico
+   para cada um — todos são o mesmo bug de concorrência.
+
+### Ordem de implementação sugerida
+1. Lock + método `_safe_send_content` / `_safe_send_tool_response`.
+2. Migrar `speak()`, `interrupt()` (via `_pending_cancel_phrase`, já
+   implementado em rodada anterior — só precisa passar a usar o método
+   seguro), `_on_text_command()`.
+3. Migrar as background tasks (system_monitor, background_monitor,
+   proactive_mode, dashboard_commands, briefing, boot_greeting).
+4. Migrar o fluxo de tool_response dentro de `_receive_audio()`.
+5. Testar: ESC durante tool ativa, texto digitado durante fala, boot do
+   zero (saudação).
+
+---
+
+## PLANO DE AÇÃO SEQUENCIAL (ordem definitiva, não reordenar)
+
+1. **PONTO 0 — Lock de serialização do `session`** (especificação completa
+   acima). Resolve ESC, texto digitado, e saudação de boot como efeito
+   colateral — são todos sintomas da mesma causa raiz.
+2. **Sanitização de logs** (Ponto 2, camada 1 mínima em `main.py` primeiro).
+   Necessário para as próximas rodadas de teste não perderem sinal em meio
+   a ruído de traceback.
+3. **Menu de seleção de mic/audio na UI** (Ponto 1). Só depois de tudo
+   acima estabilizado — é melhoria de UX, não bugfix.
+4. Ponto 3 (model ID): NENHUMA AÇÃO — já está correto como está.
+
+---
+
+## Funcionalidades Operacionais Estáveis (não tocar sem necessidade)
+- Gemini Live API conecta com sucesso, latência de voz 1-2s CONFIRMADA.
+- Descoberta dinâmica de model Live + cache (`_resolve_live_model` e afins)
+  — funcionando corretamente, não fixar hardcoded (ver Ponto 3).
+- Captura de microfone (`_listen_audio`) — CORRIGIDA e confirmada (78+
+  chunks contínuos), gate `turn_pending` removido, mime_type com rate
+  explícito (`audio/pcm;rate=16000`).
+- Sistema de plugins (auto-discovery em `plugins/`, isolamento de crash).
+- HUD PyQt6, Dashboard remoto (FastAPI + AES-256 + QR pairing).
+- File processor multi-formato, Browser control (Playwright).
+- Memory manager (long_term.json).
+- Identidade PT-BR fixa, hotkey F4 global, Modo Fantasma/Bandeja.
+- OpenRouter gratuito para deep_reasoning.
+
+## Regras de Ouro (inalteradas)
 - PT-BR estrito em toda saída falada/escrita do assistente.
 - Tratamento exclusivo: "Senhor" (nunca "sir", nunca "efendim").
 - CPU/GPU mínimo durante jogos — HUD e métricas pausam ao minimizar.
 - Toda entrega de código é cirúrgica (antes/depois), nunca arquivo completo.
 - Zero saudações/preâmbulos em respostas técnicas.
-
----
-
-## SPRINT 4 — Resiliência de API + UX de Boot (CONCLUÍDA)
-- Cancelamento cooperativo (threading.Event) para tools em executor — asyncio Task.cancel()
-  sozinho NÃO para threads de run_in_executor; todo tool longo futuro deve seguir esse padrão
-  se precisar ser interrompível de fato.
-- `core/llm_client.py::gemini_call_resilient()` — usar para QUALQUER chamada direta ao
-  Gemini que possa sofrer 503 (dev_agent, code_helper, session summary futuramente).
-- Timezone: SEMPRE `datetime.now(ZoneInfo("America/Sao_Paulo"))`, nunca `datetime.now()` puro
-  em contexto exposto ao usuário — clock do host pode estar em UTC.
-
-## SPRINT 4 — Diagnóstico de Latência Live API (CRÍTICO)
-
-**Causa raiz:** `gemini-2.5-flash-native-audio-preview-12-2025` é modelo
-PREVIEW em fila de descontinuação — instabilidade de latência é esperada
-para modelos preview, não é bug do JARVIS.
-
-**Correção de rota (IMPORTANTE — diverge do pedido original do usuário):**
-`gemini-1.5-flash` NÃO é compatível com `client.aio.live.connect()` — a
-série 1.5 inteira foi desligada (requests retornam 404) e, mesmo ativa,
-nunca suportou o protocolo Live (WebSocket bidirecional de áudio). Pedidos
-de "modelo estável" para a sessão Live devem apontar para o modelo Live
-ATUAL recomendado pela Google, não para qualquer modelo "estável" genérico
-do catálogo Gemini.
-
-Modelo correto para substituição: `gemini-3.1-flash-live-preview`.
-Mudanças de protocolo exigidas na migração:
-- `thinkingBudget` → `thinkingLevel` (usar `"minimal"` para latência mínima)
-- Eventos de servidor podem conter múltiplos `parts` no mesmo evento
-  (áudio + transcript simultâneos) — código de parsing em `_receive_audio`
-  já itera todos os campos do `server_content`, compatível sem alteração
-- Function calling permanece síncrono (sem impacto — JARVIS já é síncrono
-  por tool call)
-- `self._enhanced_live` (affective dialog / proactive audio) já tem fallback
-  automático caso o novo modelo rejeite esses parâmetros — sem risco de
-  regressão nessa troca
-
-**Padrão de resiliência adotado:** nunca hardcodar modelo Live sem
-fallback de reconexão — `run()` já trata `INVALID_ARGUMENT`/`Unknown name`
-desabilitando `_enhanced_live` e reconectando; esse padrão cobre também
-uma eventual rejeição de `thinkingLevel` pelo novo modelo.
-
-## Clipboard — REMOÇÃO (não desativação)
-Decisão: remover fisicamente `ClipboardPanel`, `_on_clipboard_changed`,
-`_clipboard_sig`, `_show_clipboard_panel`, `_position_clipboard_panel`,
-`_on_clipboard_action` de `ui.py`. Justificativa: é listener sempre-ativo
-(`QApplication.clipboard().dataChanged`) monitorando 100% do clipboard do
-usuário — feature de superfície de privacidade desnecessária uma vez
-rejeitada explicitamente. Deixar como "toggle desligado por padrão" mantém
-código morto + superfície de risco latente sem benefício.
-
-## Roteamento por especialidade — avaliação arquitetural
-Já existe esqueleto em `core/llm_client.py::FREE_MODELS` (general/code/
-reasoning) consumido por `deep_reasoning` via parâmetro `task_type`. Isso
-JÁ É o "agentic router por especialidade" na prática — não requer novo
-subsistema. Expandir a lista de modelos por categoria, sem adicionar
-camada de classificação (custaria uma chamada LLM extra por request,
-contra o objetivo de baixa latência).
+- **NOVA REGRA (Sprint 5): qualquer erro 1007/1008 NUNCA deve ser tratado
+  como prova de API key inválida.** A causa real está sempre na mensagem
+  de texto associada (`err_str`) — deve ser lida e diagnosticada, nunca
+  assumida. Ver post-mortem completo acima.
+- **NOVA REGRA (Sprint 5): NUNCA chamar `self.session.send_client_content`
+  ou `send_tool_response` diretamente fora dos métodos seguros do Ponto 0**,
+  uma vez implementados — todo acesso ao `session` para envio de conteúdo
+  de turno deve passar pelo lock.
