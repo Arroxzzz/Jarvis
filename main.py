@@ -153,8 +153,23 @@ def _discover_live_models(api_key: str) -> list[str]:
             )
             actions_str = " ".join(str(a) for a in actions).lower()
             if "bidigeneratecontent" in actions_str:
+                # translate/transcribe são modelos Live especializados, não
+                # modelos de diálogo de voz completo.
+                lname = name.lower()
+                if "translate" in lname or "transcribe" in lname:
+                    continue
                 found.append(name)
-        found.sort(key=lambda n: (0 if "live" in n.lower() else 1, "exp" in n.lower(), n))
+
+        def _rank(n: str) -> tuple:
+            lname = n.lower()
+            return (
+                0 if "native-audio" in lname else 1,
+                0 if "live" in lname else 1,
+                "exp" in lname,
+                n,
+            )
+
+        found.sort(key=_rank)
         if found:
             print(f"[JARVIS] 🔍 Live models descobertos: {found}")
     except Exception as e:
@@ -691,6 +706,7 @@ class JarvisLive:
         self._session_log: list[str] = []          # conversation turns for end-of-session summary
         self._active_tool_tasks: list[asyncio.Task] = []
         self._active_cancel_events: list[threading.Event] = []   # cancelamento cooperativo (dev_agent etc.)
+        self._session_lock: asyncio.Lock = asyncio.Lock()   # serializa envios de turno na sessão Live
         self._boot_greeted: bool = False
         self._pending_cancel_phrase: str | None = None   # frase de cancelamento adiada até o tool_response sair
         self._last_turn_activity: float = time.monotonic()   # watchdog anti-travamento de mic
@@ -711,6 +727,21 @@ class JarvisLive:
         self.ui.get_plugins = self._plugin_registry.list_for_ui
         self.ui.request_say = self.plugin_say   # plugins: mid-task speech channel
 
+    async def _safe_send_content(self, parts: list, turn_complete: bool = True) -> None:
+        """Serializa envios de conteúdo para evitar chamadas concorrentes na sessão Live."""
+        if not self.session:
+            return
+        async with self._session_lock:
+            await self.session.send_client_content(
+                turns={"parts": parts}, turn_complete=turn_complete
+            )
+
+    async def _safe_send_tool_response(self, function_responses: list) -> None:
+        if not self.session:
+            return
+        async with self._session_lock:
+            await self.session.send_tool_response(function_responses=function_responses)
+
     def plugin_say(self, instruction: str) -> None:
         """
         Thread-safe speech channel for plugins: lets a plugin ask JARVIS to
@@ -726,10 +757,7 @@ class JarvisLive:
 
         async def _say():
             try:
-                await self.session.send_client_content(
-                    turns={"parts": [{"text": instruction}]},
-                    turn_complete=True,
-                )
+                await self._safe_send_content([{"text": instruction}])
             except Exception as e:
                 print(f"[PluginSay] {e}")
 
@@ -788,10 +816,7 @@ class JarvisLive:
         if not self._loop or not self.session:
             return
         asyncio.run_coroutine_threadsafe(
-            self.session.send_client_content(
-                turns={"parts": [{"text": text}]},
-                turn_complete=True
-            ),
+            self._safe_send_content([{"text": text}]),
             self._loop
         )
 
@@ -840,10 +865,7 @@ class JarvisLive:
         if not self._loop or not self.session:
             return
         asyncio.run_coroutine_threadsafe(
-            self.session.send_client_content(
-                turns={"parts": [{"text": text}]},
-                turn_complete=True
-            ),
+            self._safe_send_content([{"text": text}]),
             self._loop
         )
 
@@ -1116,14 +1138,12 @@ class JarvisLive:
                 self.ui.write_log("SYS: Shutdown requested.")
                 async def _do_shutdown():
                     await self._save_session_summary()
-                    if self.session:
-                        try:
-                            await self.session.send_client_content(
-                                turns={"parts": [{"text": "Say a brief natural goodbye to the user."}]},
-                                turn_complete=True,
-                            )
-                        except Exception:
-                            pass
+                    try:
+                        await self._safe_send_content(
+                            [{"text": "Say a brief natural goodbye to the user."}]
+                        )
+                    except Exception:
+                        pass
                     await asyncio.sleep(1.5)
                     import os as _os
                     _os._exit(0)
@@ -1301,13 +1321,10 @@ class JarvisLive:
                                 self._pending_vision = None
                                 b64 = _b64.b64encode(img_b).decode("ascii")
                                 print(f"[Vision] 📤 {len(img_b):,} bytes (angle={angle}) → main session")
-                                await self.session.send_client_content(
-                                    turns={"parts": [
-                                        {"inline_data": {"mime_type": mime_t, "data": b64}},
-                                        {"text": question},
-                                    ]},
-                                    turn_complete=True,
-                                )
+                                await self._safe_send_content([
+                                    {"inline_data": {"mime_type": mime_t, "data": b64}},
+                                    {"text": question},
+                                ])
                                 # Mark next turn_complete behaviour depending on angle
                                 if self._vision_cam_active:
                                     # Camera: keep busy until JARVIS finishes speaking the answer
@@ -1344,16 +1361,11 @@ class JarvisLive:
                             ]
                         finally:
                             self._active_tool_tasks = []
-                        await self.session.send_tool_response(
-                            function_responses=fn_responses
-                        )
+                        await self._safe_send_tool_response(fn_responses)
                         if self._pending_cancel_phrase:
                             _phrase = self._pending_cancel_phrase
                             self._pending_cancel_phrase = None
-                            await self.session.send_client_content(
-                                turns={"parts": [{"text": _phrase}]},
-                                turn_complete=True,
-                            )
+                            await self._safe_send_content([{"text": _phrase}])
         except Exception as e:
             print(f"[JARVIS] ❌ Recv: {e}")
             traceback.print_exc()
@@ -1467,10 +1479,7 @@ class JarvisLive:
         if self._turn_done_event:
             self._turn_done_event.clear()
 
-        await self.session.send_client_content(
-            turns={"parts": [{"text": p1}]},
-            turn_complete=True,
-        )
+        await self._safe_send_content([{"text": p1}])
         self.ui.write_log("SYS: Briefing phase 1 (greeting) sent.")
 
         # ── Phase 2: fire as soon as Phase 1 audio is done ───────────────────
@@ -1528,10 +1537,7 @@ class JarvisLive:
                         f"Let the user know briefly.{lang_str}"
                     )
 
-                await self.session.send_client_content(
-                    turns={"parts": [{"text": p2}]},
-                    turn_complete=True,
-                )
+                await self._safe_send_content([{"text": p2}])
                 self.ui.write_log("SYS: Briefing phase 2 (news) sent.")
             except Exception as e:
                 print(f"[Briefing] Phase 2 error: {e}")
@@ -1559,7 +1565,7 @@ class JarvisLive:
         else:
             prompt = "Cumprimente o usuário dizendo que está online e pronto, uma frase curta, em PT-BR."
         try:
-            await self.session.send_client_content(turns={"parts": [{"text": prompt}]}, turn_complete=True)
+            await self._safe_send_content([{"text": prompt}])
         except Exception as e:
             print(f"[Boot] Greeting failed: {e}")
 
@@ -1624,10 +1630,7 @@ class JarvisLive:
             if speaking or (time.monotonic() - self._last_user_speech) < 10:
                 continue
             try:
-                await self.session.send_client_content(
-                    turns={"parts": [{"text": alert}]},
-                    turn_complete=True,
-                )
+                await self._safe_send_content([{"text": alert}])
             except Exception as e:
                 print(f"[Monitor] ⚠️ Could not send alert: {e}")
 
@@ -1654,10 +1657,7 @@ class JarvisLive:
                                 f"Inform the user about this development naturally in {lang}. "
                                 "One brief sentence only."
                             )
-                            await self.session.send_client_content(
-                                turns={"parts": [{"text": msg}]},
-                                turn_complete=True,
-                            )
+                            await self._safe_send_content([{"text": msg}])
                             self.ui.write_log(f"SYS: Monitor alert sent.")
                             await asyncio.sleep(6)   # gap between consecutive alerts
                     except Exception as e:
@@ -1697,10 +1697,7 @@ class JarvisLive:
                     monitors     = monitors or None,
                     recent_turns = recent_turns or None,
                 )
-                await self.session.send_client_content(
-                    turns={"parts": [{"text": prompt}]},
-                    turn_complete=True,
-                )
+                await self._safe_send_content([{"text": prompt}])
                 self.ui.write_log("SYS: Proactive check-in.")
             except Exception as e:
                 print(f"[Proactive] ⚠️ {e}")
@@ -1746,10 +1743,7 @@ class JarvisLive:
                         break
                     await asyncio.sleep(0.1)
                 if self.session:
-                    await self.session.send_client_content(
-                        turns={"parts": [{"text": text}]},
-                        turn_complete=True,
-                    )
+                    await self._safe_send_content([{"text": text}])
                     self.ui.write_log(f"[Web]: {text}")
                 else:
                     print(f"[Dashboard] Dropped command (no session): {text}")
@@ -1772,6 +1766,13 @@ class JarvisLive:
 
         discovered = await asyncio.to_thread(_discover_live_models, api_key)
 
+        if not discovered:
+            self.ui.write_log(
+                "SYS: ⚠️ Nenhum modelo Live descoberto via API — usando "
+                "cache/fallback estático. Se a conexão falhar, verifique "
+                "a API key e disponibilidade do modelo Live no console."
+            )
+
         candidates: list[str] = []
         if cached:
             candidates.append(cached)
@@ -1784,7 +1785,9 @@ class JarvisLive:
 
         self._live_candidates = candidates
         self._live_idx = 0
-        print(f"[JARVIS] 🎯 Live model em uso: {candidates[0]}  (+{len(candidates)-1} fallback(s))")
+        _msg = f"Live model em uso: {candidates[0]}  (+{len(candidates)-1} fallback(s))"
+        print(f"[JARVIS] 🎯 {_msg}")
+        self.ui.write_log(f"SYS: {_msg}")
 
     def _current_live_model(self) -> str:
         if not self._live_candidates:
@@ -1885,7 +1888,15 @@ class JarvisLive:
                 # externally, which `except Exception` would miss, letting the
                 # exception escape the while-loop and causing asyncio.run() to
                 # start shutdown — resulting in "executor after shutdown" errors).
-                err_str = str(e)
+                # Flattenamos ExceptionGroup porque str(e) omite a mensagem
+                # real da subexceção, como o código 1007.
+                def _flatten_err_text(exc: BaseException) -> str:
+                    parts = [str(exc)]
+                    for sub in getattr(exc, "exceptions", []):
+                        parts.append(_flatten_err_text(sub))
+                    return " | ".join(parts)
+
+                err_str = _flatten_err_text(e)
                 print(f"[JARVIS] Error ({type(e).__name__}): {e}")
                 traceback.print_exc()
 

@@ -1,51 +1,58 @@
-# CURRENT_TASK — Sprint 5 EM ANDAMENTO — PONTO 0 É A PRÓXIMA AÇÃO
+# CURRENT_TASK — FASE 0 EM ANDAMENTO — BLOQUEADOR DE BOOT
 
-## Contexto de handoff (sessão anterior atingiu limite de contexto)
-Ler `.ai/PROJECT_STATE.md` INTEIRO antes de qualquer código — contém o
-diagnóstico completo e a especificação técnica exata do que fazer.
-Este arquivo é só o resumo acionável.
+## Contexto
+Auditoria técnica externa completa realizada (2026-09-02). Plano consolidado
+em 5 fases está em `.ai/PROJECT_STATE.md`. Este arquivo aponta só a AÇÃO
+IMEDIATA — ler PROJECT_STATE.md inteiro antes de qualquer código.
 
-## Estado atual confirmado por teste real (Senhor Paulo)
-- ✅ Latência de voz: 1-2s (objetivo da sprint CUMPRIDO).
-- ✅ Microfone: 78+ chunks enviados continuamente, sem falha.
-- ✅ Conexão Live estabelece e permanece de pé durante uso normal.
-- ❌ ESC durante tool ativa → 1007, derruba socket.
-- ❌ Texto digitado na UI durante sessão ativa → 1007, derruba socket.
-- ❌ Saudação de boot não fala.
-- ❌ ACTIVITY LOG poluído com tracebacks crus.
+## PRÓXIMA AÇÃO IMEDIATA — Jarvis não inicia sessão de voz
+Sintoma relatado: UI carrega normalmente, mas nenhuma resposta a comandos
+("Jarvis, tá aí?" → silêncio). Isso é ANTERIOR ao bug do Ponto 0 (que só
+se manifesta sob concorrência ativa) — aqui a sessão Live provavelmente
+nunca conecta.
 
-## PRÓXIMA AÇÃO IMEDIATA (sem precisar perguntar nada ao usuário)
-Implementar o PONTO 0 conforme especificação completa em
-`.ai/PROJECT_STATE.md` seção "⭐ ESPECIFICAÇÃO DO PONTO 0": adicionar
-`asyncio.Lock` em `JarvisLive`, criar métodos seguros de envio
-(`_safe_send_content` / equivalente para tool_response), migrar todos os
-pontos de chamada listados na especificação. Isso resolve ESC, texto
-digitado, e saudação de boot simultaneamente (mesma causa raiz).
+### Passos de diagnóstico (fazer antes de qualquer patch)
+1. Pedir ao Senhor Paulo o log do CONSOLE (não da UI) no momento do boot.
+   Procurar por: `[JARVIS] Connecting...`, seguido de erro ou de
+   `[JARVIS] Connected.`.
+2. Se não aparecer nem `Connecting...`: problema é anterior —
+   `_validate_gemini_key()` falhando silenciosamente ou API key ausente.
+3. Se aparecer erro com `1007`/`1008`/`not found for API version`: modelo
+   Live indisponível — `LIVE_MODEL_FALLBACKS` (main.py) desatualizado.
+4. Teste isolado sugerido:
+   ```
+   python -c "from google import genai; c=genai.Client(api_key='KEY'); print([m.name for m in c.models.list() if 'live' in m.name.lower()])"
+   ```
+   Lista vazia = problema de API/região/key, não de código.
 
-Gerar diffs cirúrgicos "antes/depois" para `main.py`, sem reescrever
-arquivo inteiro, seguindo o padrão de todas as rodadas anteriores desta
-sessão.
+### Correção a aplicar (Fase 0 do plano consolidado)
+- `main.py::_resolve_live_model` / `_discover_live_models`: adicionar log
+  explícito de falha na UI (`self.ui.write_log`), hoje só vai pro console
+  e pode passar despercebido.
+- Se confirmado catálogo desatualizado: atualizar `LIVE_MODEL_FALLBACKS`
+  com IDs válidos retornados por `models.list()`.
 
-## Depois do Ponto 0 (ordem já definida, não reordenar)
-1. Testar: ESC durante tool longa, texto digitado durante fala ativa, boot
-   do zero confirmando saudação única.
-2. Sanitização de logs — camada mínima em `main.py` primeiro (trocar
-   `write_log` de erros crus por `logging.exception()` → `jarvis.log`).
-3. Menu de seleção de dispositivo de mic/output na UI (`ui.py`), aplicado
-   só no boot/reconexão, sem hot-swap em runtime na v1.
+**NÃO prosseguir para o Ponto 0 (Fase 1) enquanto o boot não estiver
+confirmado funcionando com log real do Senhor Paulo.**
+
+## Depois do boot confirmado — ordem já definida em PROJECT_STATE.md
+1. FASE 1 — Ponto 0: lock de serialização do `session` (especificação
+   completa em PROJECT_STATE.md). Resolve ESC/texto/1007.
+2. FASE 2 — Correção de estados órfãos (_vision_busy, browser_control
+   session registry).
+3. FASE 3 — Segurança crítica: AES-GCM no dashboard, remover pyautogui do
+   sandbox de desktop.py, allowlist em user_data().
+4. FASE 4 — Quebrar main.py monolítico + timeout em plugin_loader.run().
+5. FASE 5 — Performance (HudCanvas cobertura de visibilidade, write
+   atômico de config).
 
 ## Decisões já fechadas nesta sprint — NÃO reabrir sem novo motivo concreto
 - Model ID Live: manter descoberta dinâmica + cache. NÃO fixar hardcoded.
-  (Ver justificativa completa em PROJECT_STATE.md, Ponto 3.)
-- Logs: não migrar todos os `actions/*.py` de uma vez — só `main.py` por
-  enquanto, é de onde vêm 100% dos tracebacks observados.
+- Sanitização de logs: reordenada para DEPOIS da Fase 3 (segurança tem
+  prioridade sobre ruído operacional, por recomendação da auditoria).
 - Seleção de device de áudio: sem hot-swap em runtime na v1.
 
-## Critério de aceite Sprint 5 (atualizado)
-- Sessão Live conecta e permanece estável sem loop de reconexão.
-- ESC cancela tool ativa sem derrubar o socket (1007).
-- Texto digitado na UI funciona durante qualquer estado de sessão.
-- Saudação de boot é falada uma única vez por sessão bem-sucedida.
-- ACTIVITY LOG não exibe tracebacks crus ao usuário final.
-- `FREE_MODELS["code"]` validado contra catálogo gratuito atual do
-  OpenRouter (pendência antiga, não relacionada a esta rodada, ainda aberta).
+## Critério de aceite desta tarefa (Fase 0)
+- Console mostra `[JARVIS] Connected.` sem erro.
+- Jarvis responde a comando de voz/texto simples ("tá aí?").
+- Causa raiz do silêncio documentada em PROJECT_STATE.md para não se repetir.
