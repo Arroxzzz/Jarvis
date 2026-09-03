@@ -1,49 +1,37 @@
-# CURRENT_TASK — FASE 0 EM ANDAMENTO — BLOQUEADOR DE BOOT
+# CURRENT_TASK — FASE 2 — DIAGNÓSTICO PÓS-PONTO 0
+
+# STATUS CONFIRMADO
+- **Fase 0 — Estabilização de Boot: CONCLUÍDA.** Teste real confirmou boot
+   estável, latência de voz ótima e `gemini-2.5-flash-native-audio-latest`
+   funcionando.
+- **Fase 1 — Ponto 0: CONCLUÍDA.** `file_controller` executou em sessão ativa
+   sem erro 1007.
+- Fases 0 e 1 não devem ser reabertas sem novo motivo concreto.
 
 ## Contexto
 Auditoria técnica externa completa realizada (2026-09-02). Plano consolidado
-em 5 fases está em `.ai/PROJECT_STATE.md`. Este arquivo aponta só a AÇÃO
-IMEDIATA — ler PROJECT_STATE.md inteiro antes de qualquer código.
+em 5 fases está em `.ai/PROJECT_STATE.md`. Este arquivo aponta a ação imediata
+de diagnóstico da Fase 2.
 
-## PRÓXIMA AÇÃO IMEDIATA — Jarvis não inicia sessão de voz
-Sintoma relatado: UI carrega normalmente, mas nenhuma resposta a comandos
-("Jarvis, tá aí?" → silêncio). Isso é ANTERIOR ao bug do Ponto 0 (que só
-se manifesta sob concorrência ativa) — aqui a sessão Live provavelmente
-nunca conecta.
+## PRÓXIMA AÇÃO IMEDIATA — Reproduzir achados pós-Fase 1
+Pedir ao Senhor Paulo para repetir o cenário com comando de voz seguido de
+tool call de arquivo, mantendo o log completo do terminal. Confirmar se:
 
-### Passos de diagnóstico (fazer antes de qualquer patch)
-1. Pedir ao Senhor Paulo o log do CONSOLE (não da UI) no momento do boot.
-   Procurar por: `[JARVIS] Connecting...`, seguido de erro ou de
-   `[JARVIS] Connected.`.
-2. Se não aparecer nem `Connecting...`: problema é anterior —
-   `_validate_gemini_key()` falhando silenciosamente ou API key ausente.
-3. Se aparecer erro com `1007`/`1008`/`not found for API version`: modelo
-   Live indisponível — `LIVE_MODEL_FALLBACKS` (main.py) desatualizado.
-4. Teste isolado sugerido:
-   ```
-   python -c "from google import genai; c=genai.Client(api_key='KEY'); print([m.name for m in c.models.list() if 'live' in m.name.lower()])"
-   ```
-   Lista vazia = problema de API/região/key, não de código.
+1. `_turn_watchdog` dispara `Turn travado >15s` logo após o `tool_response`.
+2. `shutdown_jarvis` é chamado sem comando explícito do usuário.
 
-### Correção a aplicar (Fase 0 do plano consolidado)
-- `main.py::_resolve_live_model` / `_discover_live_models`: adicionar log
-  explícito de falha na UI (`self.ui.write_log`), hoje só vai pro console
-  e pode passar despercebido.
-- Se confirmado catálogo desatualizado: atualizar `LIVE_MODEL_FALLBACKS`
-  com IDs válidos retornados por `models.list()`.
+O objetivo é distinguir efeito colateral de `_safe_send_tool_response` de
+comportamento pré-existente e confirmar se o shutdown é uma interpretação
+indevida do modelo após o watchdog.
 
-**NÃO prosseguir para o Ponto 0 (Fase 1) enquanto o boot não estiver
-confirmado funcionando com log real do Senhor Paulo.**
-
-## Depois do boot confirmado — ordem já definida em PROJECT_STATE.md
-1. FASE 1 — Ponto 0: lock de serialização do `session` (especificação
-   completa em PROJECT_STATE.md). Resolve ESC/texto/1007.
-2. FASE 2 — Correção de estados órfãos (_vision_busy, browser_control
+## Próximas fases — ordem já definida em PROJECT_STATE.md
+1. FASE 2 — Diagnóstico máximo do watchdog e do `shutdown_jarvis` inesperado;
+   depois correção de estados órfãos (`_vision_busy`, browser_control
    session registry).
-3. FASE 3 — Segurança crítica: AES-GCM no dashboard, remover pyautogui do
+2. FASE 3 — Segurança crítica: AES-GCM no dashboard, remover pyautogui do
    sandbox de desktop.py, allowlist em user_data().
-4. FASE 4 — Quebrar main.py monolítico + timeout em plugin_loader.run().
-5. FASE 5 — Performance (HudCanvas cobertura de visibilidade, write
+3. FASE 4 — Quebrar main.py monolítico + timeout em plugin_loader.run().
+4. FASE 5 — Performance (HudCanvas cobertura de visibilidade, write
    atômico de config).
 
 ## Decisões já fechadas nesta sprint — NÃO reabrir sem novo motivo concreto
@@ -52,7 +40,6 @@ confirmado funcionando com log real do Senhor Paulo.**
   prioridade sobre ruído operacional, por recomendação da auditoria).
 - Seleção de device de áudio: sem hot-swap em runtime na v1.
 
-## Critério de aceite desta tarefa (Fase 0)
-- Console mostra `[JARVIS] Connected.` sem erro.
-- Jarvis responde a comando de voz/texto simples ("tá aí?").
-- Causa raiz do silêncio documentada em PROJECT_STATE.md para não se repetir.
+## Critério de aceite da Fase 2
+- Reprodução controlada com log completo do terminal.
+- Causa do `Turn travado >15s` após `file_controller` identificada.

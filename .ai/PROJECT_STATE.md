@@ -1,12 +1,10 @@
 # PROJECT_STATE — JARVIS MARK LI — PLANO CONSOLIDADO PÓS-AUDITORIA (2026-09-02)
 
-## STATUS ATUAL — BLOQUEADOR ATIVO
-Jarvis não inicia sessão de voz (UI carrega, sem resposta a comandos).
-Suspeita: `LIVE_MODEL_FALLBACKS` (main.py) desatualizado/depreciado pela
-Google, ou `_discover_live_models()` retornando vazio silenciosamente.
-AÇÃO IMEDIATA: adicionar log explícito de falha de descoberta em
-`_resolve_live_model`/`_discover_live_models` antes de qualquer outra fase.
-Não prosseguir para Fase 1 sem o boot funcionando.
+## STATUS ATUAL — BOOT E PONTO 0 CONCLUÍDOS
+Boot confirmado em teste real: sessão Live estável, latência de voz ótima e
+`gemini-2.5-flash-native-audio-latest` funcionando.
+Tool call de `file_controller` executada durante sessão ativa sem erro 1007,
+confirmando a eficácia do lock de serialização do `session`.
 
 ## VEREDITO DA AUDITORIA EXTERNA (referência — não redescutir sem novo motivo)
 - Arquitetura: 4/10 — `main.py` deus-objeto, duplicação entre
@@ -15,38 +13,45 @@ Não prosseguir para Fase 1 sem o boot funcionando.
   = RCE de fato), dashboard usa AES-CBC sem MAC + SHA256 sem PBKDF2,
   user_data() sem allowlist de campos.
 - Manutenibilidade: 4/10 — zero testes, zero logging estruturado.
-- Estabilidade: 3/10 — PONTO 0 especificado mas CONFIRMADO NÃO IMPLEMENTADO
-  no código atual (sem asyncio.Lock, sem _safe_send_content em main.py).
+- Estabilidade: atualizada após validação real — Ponto 0 implementado e
+  confirmado sem erro 1007 durante tool call ativa.
 - Performance: 6/10 — boa cobertura de _bounded/timeout na maioria das tools.
 
 ## PLANO DE EXECUÇÃO SEQUENCIAL (ordem definitiva — não reordenar sem novo motivo)
 
-### FASE 0 — Estabilização de Boot (BLOQUEANTE — fazer primeiro)
-- `main.py::_resolve_live_model` / `_discover_live_models`: logar falha de
-  descoberta explicitamente na UI (`self.ui.write_log`), não só no console.
-- Validar catálogo atual de `LIVE_MODEL_FALLBACKS` contra
-  `client.models.list()` real — pendência de teste manual do Senhor Paulo.
-- Critério de aceite: `[JARVIS] Connected.` aparece no console e Jarvis
-  responde a "tá aí?".
+### FASE 0 — Estabilização de Boot (CONCLUÍDA)
+- Confirmada em teste real a estabilidade do boot e da sessão Live.
+- Confirmada latência de voz ótima.
+- Modelo validado em execução: `gemini-2.5-flash-native-audio-latest`.
+- Critério de aceite atendido: sessão conectada e funcional.
 
-### FASE 1 — PONTO 0: Lock de Serialização do `session`
-Especificação técnica completa mantida abaixo (não implementada ainda).
-- `main.py::JarvisLive.__init__`: `self._session_lock = asyncio.Lock()`.
-- Novo método `_safe_send_content(parts, turn_complete=True)` +
-  `_safe_send_tool_response(fn_responses)`, ambos com
-  `async with self._session_lock`.
-- `send_realtime_input` FICA FORA do lock (áudio contínuo não compete
-  com turnos — ver justificativa na especificação original abaixo).
-- Migrar TODAS as chamadas diretas em `main.py`:
-  `speak`, `plugin_say`, `_on_text_command`, `_execute_tool` (shutdown),
-  `_receive_audio` (injeção visão + tool_response + cancel_phrase),
-  `_send_startup_briefing`, `_send_boot_greeting`, `_run_system_monitor`,
-  `_run_background_monitor`, `_run_proactive_mode`,
-  `_process_dashboard_commands`.
-- Critério de aceite: ESC durante tool ativa, texto digitado durante fala,
-  saudação de boot — sem erro 1007, testado com Senhor Paulo.
+### FASE 1 — PONTO 0: Lock de Serialização do `session` (CONCLUÍDA)
+- `asyncio.Lock` e helpers seguros implementados em `main.py`.
+- Chamadas de conteúdo e `tool_response` migradas para os helpers
+  serializados; `send_realtime_input` permanece fora do lock.
+- Teste real confirmado: `file_controller` executou durante sessão ativa
+  sem erro 1007.
+- Critério de aceite principal atendido: não houve colisão de
+  `send_client_content`.
 
-### FASE 2 — Correção de Estados Órfãos (efeito colateral do Ponto 0)
+## ACHADOS PÓS-FASE 1 — INVESTIGAR NA FASE 2
+- **Prioridade máxima — watchdog:** `_turn_watchdog` disparou
+  `Turn travado >15s` logo após o `tool_response` de `file_controller`.
+  O `turn_done_event` não foi definido organicamente e precisou da
+  intervenção do watchdog. Investigar se é efeito colateral de
+  `_safe_send_tool_response` (Ponto 0) ou comportamento pré-existente.
+- **Prioridade máxima — shutdown inesperado:** `shutdown_jarvis` foi chamado
+  logo em seguida, sem comando explícito visível na transcrição do usuário.
+  Pode ser falso positivo do modelo interpretando o silêncio pós-watchdog
+  como intenção de encerrar a sessão. Reproduzir de forma controlada.
+- **Baixa prioridade — resumo de sessão:** `_save_session_summary` em
+  `main.py` falha com 503 sem fallback. Diferentemente de outras chamadas
+  Gemini do projeto, não usa `gemini_call_resilient` em
+  `core/llm_client.py`. Registrar para a Fase 2 ou 4.
+
+### FASE 2 — Correção de Estados Órfãos e Diagnóstico Pós-Ponto 0
+- **Prioridade MÁXIMA:** reproduzir e diagnosticar o disparo de
+  `Turn travado >15s` após `file_controller` e o `shutdown_jarvis` inesperado.
 - `main.py::_execute_tool` (branch `screen_process`): `try/finally`
   garantindo reset de `_vision_busy` mesmo com `CancelledError`.
 - `actions/browser_control.py::_SessionRegistry`: lock em
