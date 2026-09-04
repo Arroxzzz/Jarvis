@@ -69,25 +69,28 @@ def _get_gemini_key() -> str | None:
 _KEY_CHARS = [c for c in (string.ascii_uppercase + string.digits)
               if c not in ('O', 'I', 'L', '0', '1')]
 
-# ── AES-256-CBC ───────────────────────────────────────────────────────────────
-_AES_SALT = b'JARVIS-DASHBOARD-v1'
+# ── AES-256-GCM ───────────────────────────────────────────────────────────────
+_AES_SALT = b'JARVIS-DASHBOARD-v2-PBKDF2'
+_PBKDF2_ITERATIONS = 200_000
 
 
 def _derive_key(session_key: str) -> bytes:
-    """SHA-256(sessionKey‖salt) → 32-byte AES-256 key (microseconds, no PBKDF2 needed)."""
-    return hashlib.sha256(session_key.encode('utf-8') + _AES_SALT).digest()
+    """PBKDF2-HMAC-SHA256(sessionKey, salt, 200k iter) → 32-byte AES-256 key."""
+    from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+    from cryptography.hazmat.primitives import hashes
+    kdf = PBKDF2HMAC(
+        algorithm=hashes.SHA256(), length=32,
+        salt=_AES_SALT, iterations=_PBKDF2_ITERATIONS,
+    )
+    return kdf.derive(session_key.encode('utf-8'))
 
 
-def _decrypt_cbc(aes_key: bytes, enc_b64: str) -> str:
-    """Decrypt base64(IV[16] ‖ ciphertext) with AES-256-CBC + PKCS7."""
-    from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
-    from cryptography.hazmat.primitives import padding as sym_pad
+def _decrypt_gcm(aes_key: bytes, enc_b64: str) -> str:
+    """Decrypt base64(IV[12] ‖ ciphertext‖tag[16]) with AES-256-GCM."""
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
     raw      = base64.b64decode(enc_b64)
-    iv, ct   = raw[:16], raw[16:]
-    dec      = Cipher(algorithms.AES(aes_key), modes.CBC(iv)).decryptor()
-    padded   = dec.update(ct) + dec.finalize()
-    unpadder = sym_pad.PKCS7(128).unpadder()
-    return (unpadder.update(padded) + unpadder.finalize()).decode('utf-8')
+    iv, ct_with_tag = raw[:12], raw[12:]
+    return AESGCM(aes_key).decrypt(iv, ct_with_tag, None).decode('utf-8')
 
 
 # ── CryptoJS (auto-download once, served locally) ─────────────────────────────
@@ -507,7 +510,7 @@ class DashboardServer:
         if not sk:
             return None
         try:
-            return _decrypt_cbc(self._aes_key(sk), enc_b64)
+            return _decrypt_gcm(self._aes_key(sk), enc_b64)
         except Exception:
             return None
 

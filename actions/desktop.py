@@ -61,9 +61,6 @@ def _build_sandbox() -> dict:
         "os_path": os.path,  
     }
 
-    if _PYAUTOGUI:
-        sandbox["pyautogui"] = pyautogui
-
     if _OS == "Windows":
         try:
             import ctypes
@@ -119,7 +116,6 @@ Desktop path: {desktop}
 
 Generate safe Python code to accomplish the task below.
 Allowed modules ONLY:
-- pyautogui (mouse, keyboard — if needed)
 - pathlib.Path (file/folder inspection only, no deletion)
 - shutil.copy2, shutil.copytree, shutil.disk_usage (NO move, NO rmtree)
 - os_path (os.path equivalent, read-only)

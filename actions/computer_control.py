@@ -143,13 +143,22 @@ def _random_data(data_type: str) -> str:
 
     return f"random_{data_type}_{random.randint(1000, 9999)}"
 
+# Campos de identidade que podem ser auto-preenchidos em formulários web.
+_USER_DATA_ALLOWLIST = {
+    "name", "first_name", "last_name", "email", "phone",
+    "city", "birthday", "nationality", "language",
+}
+
 def _user_profile() -> dict:
-    """Read identity fields from long-term memory."""
+    """Read identity fields from long-term memory — apenas campos na allowlist."""
     try:
         if _MEMORY_PATH.exists():
             data     = json.loads(_MEMORY_PATH.read_text(encoding="utf-8"))
             identity = data.get("identity", {})
-            return {k: v.get("value", "") for k, v in identity.items()}
+            return {
+                k: v.get("value", "") for k, v in identity.items()
+                if k in _USER_DATA_ALLOWLIST
+            }
     except Exception:
         pass
     return {}
@@ -499,7 +508,9 @@ def computer_control(
             return result
 
         if action == "user_data":
-            field   = params.get("field", "name")
+            field = params.get("field", "name")
+            if field not in _USER_DATA_ALLOWLIST:
+                return f"Campo '{field}' não permitido para auto-preenchimento, Senhor."
             profile = _user_profile()
             value   = profile.get(field, "")
             if not value:

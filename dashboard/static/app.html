@@ -4,7 +4,6 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>JARVIS Dashboard</title>
-  <script src="/static/crypto.js"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     :root {
@@ -167,38 +166,44 @@
       return fetch(url, opts);
     }
 
-    // ── AES-256-CBC encryption (CryptoJS) ────────────────────────────────────
-    const _AES_SALT = 'JARVIS-DASHBOARD-v1';
+    // ── AES-256-GCM encryption (Web Crypto API nativa — sem CryptoJS) ────────
+    const _AES_SALT = new TextEncoder().encode('JARVIS-DASHBOARD-v2-PBKDF2');
+    const _PBKDF2_ITER = 200000;
     let _aesKey = null;
 
-    function _initCrypto(key) {
-      if (typeof CryptoJS === 'undefined') return false;
-      _aesKey = CryptoJS.SHA256(key + _AES_SALT);
-      return true;
+    async function _initCrypto(key) {
+      try {
+        const enc = new TextEncoder();
+        const baseKey = await crypto.subtle.importKey(
+          'raw', enc.encode(key), 'PBKDF2', false, ['deriveKey']
+        );
+        _aesKey = await crypto.subtle.deriveKey(
+          { name: 'PBKDF2', salt: _AES_SALT, iterations: _PBKDF2_ITER, hash: 'SHA-256' },
+          baseKey, { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']
+        );
+        return true;
+      } catch { return false; }
     }
 
-    function _encrypt(plaintext) {
-      if (!_aesKey || typeof CryptoJS === 'undefined') return null;
+    async function _encrypt(plaintext) {
+      if (!_aesKey) return null;
       try {
-        const iv  = CryptoJS.lib.WordArray.random(16);
-        const enc = CryptoJS.AES.encrypt(
-          CryptoJS.enc.Utf8.parse(plaintext), _aesKey,
-          { iv, mode: CryptoJS.mode.CBC, padding: CryptoJS.pad.Pkcs7 }
-        );
-        const ivHex = iv.toString(CryptoJS.enc.Hex);
-        const ctHex = enc.ciphertext.toString(CryptoJS.enc.Hex);
-        const hex   = ivHex + ctHex;
-        const bytes = new Uint8Array(hex.length / 2);
-        for (let i = 0; i < bytes.length; i++)
-          bytes[i] = parseInt(hex.substr(i * 2, 2), 16);
+        const iv  = crypto.getRandomValues(new Uint8Array(12));
+        const enc = new TextEncoder().encode(plaintext);
+        const ctBuf = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, _aesKey, enc);
+        const bytes = new Uint8Array(iv.length + ctBuf.byteLength);
+        bytes.set(iv, 0);
+        bytes.set(new Uint8Array(ctBuf), iv.length);
         return btoa(String.fromCharCode(...bytes));
       } catch { return null; }
     }
 
-    const _encReady = _sessionKey ? _initCrypto(_sessionKey) : false;
-    const encBadge  = document.getElementById('enc');
-    if (_encReady) { encBadge.className = 'enc-badge on'; }
-    else           { encBadge.className = 'enc-badge off'; encBadge.textContent = 'NO ENC'; }
+    let _encReady = false;
+    (async () => { _encReady = _sessionKey ? await _initCrypto(_sessionKey) : false;
+      const encBadge2 = document.getElementById('enc');
+      if (_encReady) { encBadge2.className = 'enc-badge on'; }
+      else { encBadge2.className = 'enc-badge off'; encBadge2.textContent = 'NO ENC'; }
+    })();
 
     // ── WebSocket ─────────────────────────────────────────────────────────────
     const feed  = document.getElementById('feed');
@@ -372,13 +377,13 @@
     });
 
     // ── Commands ──────────────────────────────────────────────────────────────
-    function doSend() {
+    async function doSend() {
       const inp = document.getElementById('inp');
       const txt = inp.value.trim();
       if (!txt) return;
       inp.value = '';
       append('user', txt);
-      const enc  = _encrypt(txt);
+      const enc  = await _encrypt(txt);
       const body = enc ? { enc } : { text: txt };
       _authFetch('/api/command', {
         method: 'POST',
