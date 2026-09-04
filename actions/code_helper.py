@@ -4,6 +4,7 @@ import json
 import re
 import time
 from pathlib import Path
+from core.llm_client import resilient_text_call, resilient_vision_call
 
 
 def get_base_dir():
@@ -24,14 +25,15 @@ def _get_api_key() -> str:
 
 
 def _get_gemini(model: str = GEMINI_MODEL):
-    from google import genai
-    _c = genai.Client(api_key=_get_api_key())
-
-    class _W:
+    class _TextModel:
         def generate_content(self, contents):
-            return _c.models.generate_content(model=model, contents=contents)
+            class _R:
+                pass
+            response = _R()
+            response.text = resilient_text_call(contents, task_type="code")
+            return response
 
-    return _W()
+    return _TextModel()
 
 
 def _clean_code(text: str) -> str:
@@ -456,13 +458,7 @@ def _screen_debug_action(description, file_path, player, speak=None) -> str:
             print(f"[Code] ⚠️ Could not read file: {err}")
 
     try:
-        from google import genai
-        from google.genai import types
-
-        client = genai.Client(api_key=_get_api_key())
-
         image_bytes  = screenshot_path.read_bytes()
-        image_base64 = _image_to_base64(screenshot_path)
 
         user_question = description or "What error or problem do you see on the screen? How can it be fixed?"
 
@@ -482,17 +478,7 @@ Please:
 
 Be specific and actionable. If you see an error message, quote it exactly."""
 
-        contents = [
-            types.Part.from_bytes(data=image_bytes, mime_type="image/png"),
-            analysis_prompt,
-        ]
-
-        response = client.models.generate_content(
-            model="gemini-flash-latest",
-            contents=contents,
-        )
-
-        analysis = response.text.strip()
+        analysis = resilient_vision_call(analysis_prompt, image_bytes, "image/png").strip()
         print(f"[Code] ✅ Screen analysis complete")
 
         try:

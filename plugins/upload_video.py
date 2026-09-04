@@ -121,8 +121,7 @@ def _generate_caption(brief: str) -> str:
     Tier-1 audiences (US/UK/CA/AU/DE...). Falls back to the brief itself if
     the call fails — the upload must never be blocked by a caption error."""
     try:
-        from google import genai
-        client = genai.Client(api_key=_get_api_key())
+        from core.llm_client import resilient_text_call
         prompt = (
             "You are a TikTok SEO copywriter. The user gives you only a rough "
             "TITLE/BRIEF; you turn it into ONE ready-to-post, LONG caption in "
@@ -144,8 +143,7 @@ def _generate_caption(brief: str) -> str:
             "- Plain text only — no quotes, no markdown, no explanations.\n"
             "- Maximum 3500 characters total."
         )
-        r = client.models.generate_content(model="gemini-flash-latest", contents=prompt)
-        caption = (r.text or "").strip()
+        caption = resilient_text_call(prompt, task_type="general").strip()
         return caption[:3900] if caption else brief
     except Exception as e:
         print(f"[UploadVideo] Caption generation failed, using brief as-is: {e}")

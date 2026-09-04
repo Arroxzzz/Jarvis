@@ -22,3 +22,12 @@ memory/*.json
 Thumbs.db
 desktop.ini
 *.bak
+
+# Chaves de API e Segredos
+config/api_keys.json
+.env
+
+# Cache e Arquivos Temporários Python
+__pycache__/
+*.pyc
+.DS_Store

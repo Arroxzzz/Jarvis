@@ -24,6 +24,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 from datetime import datetime
+from core.llm_client import resilient_text_call, resilient_vision_call
 
 def _get_api_key() -> str:
     config_path = Path(__file__).resolve().parent.parent / "config" / "api_keys.json"
@@ -32,14 +33,24 @@ def _get_api_key() -> str:
 
 
 def _gemini_client():
-    from google import genai
-    _c = genai.Client(api_key=_get_api_key())
+    class _Resp:
+        def __init__(self, text):
+            self.text = text
 
-    class _W:
+    class _TextClient:
         def generate_content(self, contents):
-            return _c.models.generate_content(model="gemini-flash-latest", contents=contents)
+            if isinstance(contents, list) and len(contents) == 2:
+                prompt, image = contents
+                import io
+                buffer = io.BytesIO()
+                image.save(buffer, format=(image.format or "PNG"))
+                image_format = (image.format or "PNG").lower()
+                return _Resp(resilient_vision_call(
+                    prompt, buffer.getvalue(), f"image/{image_format}"
+                ))
+            return _Resp(resilient_text_call(contents, task_type="general"))
 
-    return _W()
+    return _TextClient()
 
 
 def _detect_type(path: Path) -> str:

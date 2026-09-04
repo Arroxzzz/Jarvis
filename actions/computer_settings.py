@@ -587,9 +587,7 @@ _DANGEROUS_ACTIONS = {"restart", "shutdown"}
 
 
 def _detect_action(description: str) -> dict:
-
-    from google import genai as _genai
-    _client = _genai.Client(api_key=_get_api_key())
+    from core.llm_client import resilient_text_call
 
     available = ", ".join(sorted(ACTION_MAP.keys())) + \
                 ", volume_set, type_text, press_key, reload_n"
@@ -613,8 +611,8 @@ Rules:
 - Return ONLY the JSON, no explanation, no markdown."""
 
     try:
-        resp = _client.models.generate_content(model="gemini-flash-lite-latest", contents=prompt)
-        text = re.sub(r"```(?:json)?", "", resp.text).strip().rstrip("`").strip()
+        resp_text = resilient_text_call(prompt, task_type="general")
+        text = re.sub(r"```(?:json)?", "", resp_text).strip().rstrip("`").strip()
         return json.loads(text)
     except Exception as e:
         print(f"[Settings] Intent detection failed: {e}")

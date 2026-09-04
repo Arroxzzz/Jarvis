@@ -4,6 +4,7 @@ import sys
 import threading
 import time
 from pathlib import Path
+from core.llm_client import resilient_text_call
 
 # ── Gemini grounding quota circuit breaker ────────────────────────────────────
 # The google_search grounding tool has its own small quota, separate from plain
@@ -79,30 +80,12 @@ def _get_api_key() -> str:
 
 
 def _gemini_search(query: str) -> str:
-    if not _gemini_available():
-        raise _QuotaCooldown("Gemini grounding is in quota cooldown")
-
-    from google import genai
-
-    client = genai.Client(api_key=_get_api_key())
-    try:
-        response = client.models.generate_content(
-            model="gemini-flash-latest",
-            contents=query,
-            config={"tools": [{"google_search": {}}]},
-        )
-    except Exception as e:
-        _note_gemini_error(e)
-        raise
-
-    text = ""
-    for part in response.candidates[0].content.parts:
-        if hasattr(part, "text") and part.text:
-            text += part.text
-
-    text = text.strip()
-    if not text:
-        raise ValueError("Gemini returned an empty response.")
+    """Compatibilidade de chamadas; usa texto resiliente, sem Gemini."""
+    text = resilient_text_call(
+        f"Responda de forma direta e factual: {query}", task_type="search"
+    )
+    if not text or text.startswith("Não foi possível obter resposta"):
+        raise ValueError("Text-search fallback vazio.")
     return text
 
 
@@ -199,25 +182,12 @@ def _format_news(query: str, results: list[dict]) -> str:
 # ── Briefing helper ────────────────────────────────────────────────────────────
 
 def _gemini_headlines(n: int = 5) -> tuple[list[str], str]:
-    """
-    Fetches current headlines via Gemini grounded search.
-    Optimised for speed: minimal prompt + strict token cap.
-    Returns (headline_list, raw_text_for_display).
-    """
+    """Último recurso sem grounding real quando a busca DDG falhar."""
     import re
-    from google import genai
-
-    client = genai.Client(api_key=_get_api_key())
-    response = client.models.generate_content(
-        model="gemini-flash-latest",
-        contents=f"Current world news: {n} headlines. Numbered list, titles only.",
-        config={"tools": [{"google_search": {}}]},
+    raw = resilient_text_call(
+        f"List {n} major current world news headlines, numbered, titles only.",
+        task_type="search",
     )
-
-    raw = ""
-    for part in response.candidates[0].content.parts:
-        if hasattr(part, "text") and part.text:
-            raw += part.text
 
     headlines = []
     for line in raw.strip().split("\n"):

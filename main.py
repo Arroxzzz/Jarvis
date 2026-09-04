@@ -77,7 +77,7 @@ from actions.background_monitor import (
 from actions.web_search        import _news as _fetch_news_sync
 from memory.config_manager     import get_brief_enabled
 from core.plugin_loader        import discover_plugins
-from core.llm_client           import call_llm_text, get_openrouter_model, FREE_MODELS
+from core.llm_client           import call_llm_text, get_openrouter_model, FREE_MODELS, gemini_call_resilient
 
 def get_base_dir():
     if getattr(sys, "frozen", False):
@@ -710,6 +710,7 @@ class JarvisLive:
         self._boot_greeted: bool = False
         self._pending_cancel_phrase: str | None = None   # frase de cancelamento adiada até o tool_response sair
         self._last_turn_activity: float = time.monotonic()   # watchdog anti-travamento de mic
+        self._watchdog_force_count: int = 0   # disparos consecutivos do watchdog — reset em turno saudável
         self._phone_relay_task: asyncio.Task | None = None
 
         self._enhanced_live = True  # affective dialog + proactive audio; auto-disabled if the server rejects them
@@ -1590,15 +1591,10 @@ class JarvisLive:
             "Output ONLY the summary text, nothing else:\n\n" + convo
         )
         try:
-            from google import genai as _genai
-            client = _genai.Client(api_key=_get_api_key())
-            resp   = await asyncio.to_thread(
-                client.models.generate_content,
-                model="gemini-flash-latest",
-                contents=prompt,
+            summary = await asyncio.to_thread(
+                gemini_call_resilient, prompt, None, "gemini-flash-latest", "general"
             )
-            summary = (resp.text or "").strip()
-            if summary:
+            if summary and not summary.startswith("Não foi possível obter resposta"):
                 save_session_summary(summary, lang)
         except Exception as e:
             print(f"[Memory] ⚠️ Session summary failed: {e}")
@@ -1608,14 +1604,33 @@ class JarvisLive:
     async def _turn_watchdog(self) -> None:
         """Evita 'surdez' permanente do microfone: se turn_done_event ficar
         preso (sem turn_complete/áudio) por >15s, força reset do gate de
-        áudio de entrada — protege contra hang do modelo Live."""
+        áudio de entrada — protege contra hang do modelo Live.
+        Se o travamento se repetir 5x seguidas (~75s), assume degradação
+        real do backend (cota/alta demanda) e força RECONEXÃO COMPLETA da
+        sessão — resetar o mesmo turno preso indefinidamente não resolve
+        um backend saturado, só mascara o sintoma."""
         while True:
             await asyncio.sleep(5)
             if self._turn_done_event and not self._turn_done_event.is_set():
                 if time.monotonic() - self._last_turn_activity > 15:
-                    print("[JARVIS] ⚠️ Turn travado >15s — forçando reset do microfone")
+                    self._watchdog_force_count += 1
+                    print(f"[JARVIS] ⚠️ Turn travado >15s — forçando reset "
+                          f"({self._watchdog_force_count}/5)")
+                    self.ui.write_log(
+                        "SYS: ⚠️ Resposta lenta — possível limite de cota da API "
+                        f"({self._watchdog_force_count}/5)."
+                    )
                     self._turn_done_event.set()
                     self._last_turn_activity = time.monotonic()
+                    if self._watchdog_force_count >= 5:
+                        self.ui.write_log("SYS: ⚠️ Travamento persistente — reconectando sessão.")
+                        self._watchdog_force_count = 0
+                        raise RuntimeError(
+                            "Watchdog: turno travado repetidamente — "
+                            "possível limite de cota, forçando reconexão."
+                        )
+            else:
+                self._watchdog_force_count = 0
 
     async def _run_system_monitor(self) -> None:
         """Background task: voice alerts when metrics exceed thresholds."""
