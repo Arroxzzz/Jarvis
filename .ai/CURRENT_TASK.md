@@ -1,45 +1,34 @@
-# CURRENT_TASK — FASE 2 — DIAGNÓSTICO PÓS-PONTO 0
-
-# STATUS CONFIRMADO
-- **Fase 0 — Estabilização de Boot: CONCLUÍDA.** Teste real confirmou boot
-   estável, latência de voz ótima e `gemini-2.5-flash-native-audio-latest`
-   funcionando.
-- **Fase 1 — Ponto 0: CONCLUÍDA.** `file_controller` executou em sessão ativa
-   sem erro 1007.
-- Fases 0 e 1 não devem ser reabertas sem novo motivo concreto.
+# CURRENT_TASK — PRÓXIMA AÇÃO: P3 (Segurança Crítica)
 
 ## Contexto
-Auditoria técnica externa completa realizada (2026-09-02). Plano consolidado
-em 5 fases está em `.ai/PROJECT_STATE.md`. Este arquivo aponta a ação imediata
-de diagnóstico da Fase 2.
+P0, P1 e P2 validados em campo e consolidados em PROJECT_STATE.md.
+Gemini isolado para voz confirmado. Groq→OpenRouter operacional.
 
-## PRÓXIMA AÇÃO IMEDIATA — Reproduzir achados pós-Fase 1
-Pedir ao Senhor Paulo para repetir o cenário com comando de voz seguido de
-tool call de arquivo, mantendo o log completo do terminal. Confirmar se:
+## Pendência aberta antes de P3 (decisão do Senhor Paulo necessária)
+`file_processor.py::_process_audio::transcribe` ainda usa Gemini —
+único ponto de texto/multimodal fora da regra "Gemini só para voz".
+Decidir: manter exceção documentada, ou migrar para Whisper local
+(zero custo, mas consome CPU — avaliar frente à regra de jogos).
 
-1. `_turn_watchdog` dispara `Turn travado >15s` logo após o `tool_response`.
-2. `shutdown_jarvis` é chamado sem comando explícito do usuário.
+## PRÓXIMA AÇÃO IMEDIATA — Fase P3
+1. `dashboard/server.py`: AES-256-CBC → AES-GCM; derivação de chave
+   SHA256 puro → PBKDF2 (lib já disponível em crypto-js.min.js).
+2. `actions/desktop.py::_build_sandbox`: remover `pyautogui` do sandbox
+   de código gerado por IA (hoje é RCE de fato via automação de teclado).
+3. `actions/computer_control.py::user_data`: allowlist de campos
+   permitidos (hoje qualquer chave de `identity` é exfiltrável).
 
-O objetivo é distinguir efeito colateral de `_safe_send_tool_response` de
-comportamento pré-existente e confirmar se o shutdown é uma interpretação
-indevida do modelo após o watchdog.
+## Depois de P3 — ordem definida
+1. P6 — Memória em Nuvem (Supabase): tabela `memory_entries`,
+   substituir backend de `memory/memory_manager.py` mantendo API pública.
+2. P7 — Modo Portátil (Pen Drive): resolver `Path.home()` espalhado,
+   modo de execução sem rastro no PC anfitrião, dependente de P6 pronto
+   para não perder memória de sessão em caso de perda do pen drive.
+3. P4 — Silero VAD (filtro de áudio local).
 
-## Próximas fases — ordem já definida em PROJECT_STATE.md
-1. FASE 2 — Diagnóstico máximo do watchdog e do `shutdown_jarvis` inesperado;
-   depois correção de estados órfãos (`_vision_busy`, browser_control
-   session registry).
-2. FASE 3 — Segurança crítica: AES-GCM no dashboard, remover pyautogui do
-   sandbox de desktop.py, allowlist em user_data().
-3. FASE 4 — Quebrar main.py monolítico + timeout em plugin_loader.run().
-4. FASE 5 — Performance (HudCanvas cobertura de visibilidade, write
-   atômico de config).
-
-## Decisões já fechadas nesta sprint — NÃO reabrir sem novo motivo concreto
-- Model ID Live: manter descoberta dinâmica + cache. NÃO fixar hardcoded.
-- Sanitização de logs: reordenada para DEPOIS da Fase 3 (segurança tem
-  prioridade sobre ruído operacional, por recomendação da auditoria).
-- Seleção de device de áudio: sem hot-swap em runtime na v1.
-
-## Critério de aceite da Fase 2
-- Reprodução controlada com log completo do terminal.
-- Causa do `Turn travado >15s` após `file_controller` identificada.
+## Decisões já fechadas — não reabrir sem novo motivo
+- Ollama (P5): arquivado.
+- Gemini exclusivo para voz: regra permanente do projeto.
+- Groq primário, OpenRouter fallback: cadeia oficial de resiliência de texto.
+- Código-fonte: repositório Git privado remoto é o backup primário.
+- Chaves de API: nunca em repositório, nunca embutidas em pen drive portátil.
