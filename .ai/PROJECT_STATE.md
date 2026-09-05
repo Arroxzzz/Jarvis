@@ -1,5 +1,44 @@
 # PROJECT_STATE — JARVIS MARK LI — HISTÓRICO CONSOLIDADO E ROADMAP (atualizado)
 
+## STATUS ATUAL (2026-09-05) — P1/P2 validados, refinamentos em andamento
+
+### Confirmado funcionando em produção
+- Groq (gpt-oss-120b/20b) + OpenRouter (openrouter/free) — zero erro de
+  URL/modelo desde a correção de endpoint duplicado e catálogo atualizado.
+- Fala imediata durante pesquisa/código ("pesquisando...", "criando o
+  código, te aviso quando terminar") — UX aprovada pelo Senhor Paulo.
+- screen_process, save_memory, proatividade (ex: aviso ao abrir jogo) —
+  funcionando organicamente.
+
+### Bugs encontrados e corrigidos nesta rodada
+- Watchdog disparava falso-positivo durante execução de tool em
+  background (padrão ack-imediato+fala-depois do P1/P2 criou gap de
+  áudio >15s entre os dois turnos). FIX: contador `_bg_tasks_pending`
+  congela o watchdog enquanto qualquer tool (síncrona ou em background)
+  está ativa.
+- Reconexão forçada pelo watchdog descartava contexto da sessão por
+  completo ("esqueceu" jogo recém-criado) — `session_resumption` estava
+  configurado mas o handle nunca era capturado/reenviado. FIX: captura
+  de `response.session_resumption_update` e reuso no `_build_config`.
+- JARVIS falando de si mesmo em 3ª pessoa ("JARVIS confirmou..."). FIX:
+  regra explícita em core/prompt.txt.
+
+### Pendente de teste real (Senhor Paulo)
+- Validar que reconexão forçada não causa mais amnésia.
+- Validar que watchdog não dispara mais durante web_search/code_helper.
+
+### Ainda não iniciado
+- P3 — Segurança (AES-GCM dashboard, sandbox desktop.py, allowlist
+  user_data) — diffs já entregues em sessão anterior, aplicação pendente.
+- P6 — Memória em nuvem (Supabase).
+- P7 — Modo portátil (pen drive).
+- Investigação aberta, não bloqueante: corte de fala do usuário no meio
+  de frase por VAD server-side — ajustável via RealtimeInputConfig se
+  necessário no futuro, adiado a pedido do Senhor Paulo.
+- Pendência externa ao código: vídeo de "trava de microfone" mencionado
+  pelo Senhor Paulo em sessão anterior — reenvio solicitado, sem contexto
+  registrado neste histórico ainda.
+
 ## LINHA DO TEMPO CONSOLIDADA
 
 ### FASE 0 — Estabilização de Boot ✅ CONCLUÍDA (validada em campo)

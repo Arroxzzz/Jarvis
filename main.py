@@ -708,9 +708,11 @@ class JarvisLive:
         self._active_cancel_events: list[threading.Event] = []   # cancelamento cooperativo (dev_agent etc.)
         self._session_lock: asyncio.Lock = asyncio.Lock()   # serializa envios de turno na sessão Live
         self._boot_greeted: bool = False
+        self._resumption_handle: str | None = None   # preserva contexto entre reconexões
         self._pending_cancel_phrase: str | None = None   # frase de cancelamento adiada até o tool_response sair
         self._last_turn_activity: float = time.monotonic()   # watchdog anti-travamento de mic
         self._watchdog_force_count: int = 0   # disparos consecutivos do watchdog — reset em turno saudável
+        self._bg_tasks_pending: int = 0       # tools rodando em background (code_helper/web_search assíncronos)
         self._phone_relay_task: asyncio.Task | None = None
 
         self._enhanced_live = True  # affective dialog + proactive audio; auto-disabled if the server rejects them
@@ -928,7 +930,7 @@ class JarvisLive:
             input_audio_transcription={},
             system_instruction="\n".join(parts),
             tools=[{"function_declarations": TOOL_DECLARATIONS + self._plugin_registry.get_tool_declarations()}],
-            session_resumption=types.SessionResumptionConfig(),
+            session_resumption=types.SessionResumptionConfig(handle=self._resumption_handle),
             # Sliding-window compression: session never dies from a full context
             # window — JARVIS can stay in one conversation for hours
             context_window_compression=types.ContextWindowCompressionConfig(
@@ -1050,11 +1052,15 @@ class JarvisLive:
                 _desc = args.get("description", "") or "o código"
 
                 def _bg_code():
-                    r = code_helper(parameters=args, player=self.ui, speak=None)
-                    self.speak(
-                        f"[CODE_RESULT — fale agora] Resultado da geração de código:\n{r}\n\n"
-                        f"Anuncie brevemente que terminou, em português, Senhor."
-                    )
+                    self._bg_tasks_pending += 1
+                    try:
+                        r = code_helper(parameters=args, player=self.ui, speak=None)
+                        self.speak(
+                            f"[CODE_RESULT — fale agora] Resultado da geração de código:\n{r}\n\n"
+                            f"Anuncie brevemente que terminou, em português, Senhor."
+                        )
+                    finally:
+                        self._bg_tasks_pending = max(0, self._bg_tasks_pending - 1)
                 loop.run_in_executor(None, _bg_code)
                 result = f"Criando o código agora, Senhor — {_desc[:60]}. Te aviso quando terminar."
 
@@ -1076,15 +1082,19 @@ class JarvisLive:
                 _query = args.get("query") or ", ".join(args.get("items", []))
 
                 def _bg_search():
-                    r = web_search_action(parameters=args, player=self.ui)
-                    if r and not r.startswith("No results") and not r.startswith("Search failed"):
-                        _label = f"{_mode.upper()} — {_query[:38]}" if _query else _mode.upper()
-                        self.ui.show_content(_label, r)
-                    self.speak(
-                        f"[SEARCH_RESULT — fale agora] Resultado da pesquisa sobre "
-                        f"'{_query}':\n{r}\n\nResuma de forma natural e direta em "
-                        f"português, Senhor."
-                    )
+                    self._bg_tasks_pending += 1
+                    try:
+                        r = web_search_action(parameters=args, player=self.ui)
+                        if r and not r.startswith("No results") and not r.startswith("Search failed"):
+                            _label = f"{_mode.upper()} — {_query[:38]}" if _query else _mode.upper()
+                            self.ui.show_content(_label, r)
+                        self.speak(
+                            f"[SEARCH_RESULT — fale agora] Resultado da pesquisa sobre "
+                            f"'{_query}':\n{r}\n\nResuma de forma natural e direta em "
+                            f"português, Senhor."
+                        )
+                    finally:
+                        self._bg_tasks_pending = max(0, self._bg_tasks_pending - 1)
                 loop.run_in_executor(None, _bg_search)
                 result = f"Pesquisando sobre {_query}, Senhor. Já aviso o resultado." if _query else "Pesquisando, Senhor."
             elif name == "file_processor":
@@ -1281,6 +1291,9 @@ class JarvisLive:
                             _SLICE = 2400
                             for _i in range(0, len(_audio_data), _SLICE):
                                 self.audio_in_queue.put_nowait(_audio_data[_i : _i + _SLICE])
+
+                    if response.session_resumption_update and response.session_resumption_update.resumable:
+                        self._resumption_handle = response.session_resumption_update.new_handle
 
                     if response.server_content:
                         sc = response.server_content
@@ -1629,9 +1642,15 @@ class JarvisLive:
         Se o travamento se repetir 5x seguidas (~75s), assume degradação
         real do backend (cota/alta demanda) e força RECONEXÃO COMPLETA da
         sessão — resetar o mesmo turno preso indefinidamente não resolve
-        um backend saturado, só mascara o sintoma."""
+        um backend saturado, só mascara o sintoma.
+        CONGELADO enquanto houver tool síncrona ativa (_active_tool_tasks)
+        ou tool assíncrona em background (_bg_tasks_pending) — a ausência
+        de áudio nesse intervalo é esperada, não um travamento real."""
         while True:
             await asyncio.sleep(5)
+            if self._active_tool_tasks or self._bg_tasks_pending > 0:
+                self._last_turn_activity = time.monotonic()
+                continue
             if self._turn_done_event and not self._turn_done_event.is_set():
                 if time.monotonic() - self._last_turn_activity > 15:
                     self._watchdog_force_count += 1
