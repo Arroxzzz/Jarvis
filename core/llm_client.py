@@ -49,37 +49,26 @@ _DEFAULTS = {
 # Ordem = prioridade de fallback (primeiro indisponível/rate-limited → tenta o próximo).
 # NOTA: validar disponibilidade real em openrouter.ai/models?max_price=0
 # antes do deploy — catálogo :free do OpenRouter muda com frequência.
+# Atualizado 2026-09 — catálogo :free do OpenRouter rotaciona slugs
+# constantemente. "openrouter/free" é o roteador oficial da OpenRouter.
 FREE_MODELS: dict[str, list[str]] = {
-    "reasoning": [
-        "deepseek/deepseek-r1:free",
-        "meta-llama/llama-3.3-70b-instruct:free",
-        "qwen/qwen-2.5-72b-instruct:free",
-    ],
-    "code": [
-        "qwen/qwen-2.5-coder-32b-instruct:free",
-        "deepseek/deepseek-chat:free",
-        "nvidia/llama-3.1-nemotron-70b-instruct:free",
-    ],
-    "vision": [
-        "meta-llama/llama-3.2-90b-vision-instruct:free",
-        "meta-llama/llama-3.2-11b-vision-instruct:free",
-        "qwen/qwen-2-vl-7b-instruct:free",
-    ],
-    "search": [
-        "meta-llama/llama-3.3-70b-instruct:free",
-        "qwen/qwen-2.5-72b-instruct:free",
-        "deepseek/deepseek-chat:free",
-    ],
-    "general": [
-        "meta-llama/llama-3.3-70b-instruct:free",
-        "deepseek/deepseek-chat:free",
-        "qwen/qwen-2.5-72b-instruct:free",
-    ],
+    "reasoning": ["openrouter/free", "deepseek/deepseek-r1:free"],
+    "code":      ["openrouter/free", "qwen/qwen-2.5-coder-32b-instruct:free"],
+    "vision":    ["openrouter/free"],
+    "search":    ["openrouter/free"],
+    "general":   ["openrouter/free"],
 }
 
 def get_openrouter_model(task: str = "general") -> str:
     """Retorna o modelo :free preferencial para a categoria; 'general' como padrão seguro."""
     return FREE_MODELS.get(task, FREE_MODELS["general"])[0]
+
+def _has_key(provider: str) -> bool:
+    """Pre-flight check — evita chamada de rede quando falta a chave."""
+    if provider not in ("groq", "openrouter"):
+        return True
+    key_name = "groq_api_key" if provider == "groq" else "openrouter_api_key"
+    return bool(_load_config().get(key_name, "").strip())
 
 def get_llm_provider() -> str:
     """Returns 'ollama', 'openai' (LM Studio/LocalAI/Jan), 'openrouter' ou 'groq'."""
@@ -103,12 +92,13 @@ def _auth_headers(force_provider: str | None = None) -> dict:
     return {"Authorization": f"Bearer {key}"} if key else {}
 
 
+# Atualizado 2026-09 — modelos confirmados no catálogo público atual.
 GROQ_MODELS: dict[str, list[str]] = {
-    "reasoning": ["deepseek-r1-distill-llama-70b", "llama-3.3-70b-versatile"],
-    "code":      ["llama-3.3-70b-versatile", "deepseek-r1-distill-llama-70b"],
-    "vision":    ["llama-3.2-90b-vision-preview", "llama-3.2-11b-vision-preview"],
-    "search":    ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"],
-    "general":   ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"],
+    "reasoning": ["openai/gpt-oss-120b", "groq/compound-mini"],
+    "code":      ["openai/gpt-oss-120b", "openai/gpt-oss-20b"],
+    "vision":    [],
+    "search":    ["groq/compound-mini", "openai/gpt-oss-20b"],
+    "general":   ["openai/gpt-oss-20b", "openai/gpt-oss-120b"],
 }
 
 
@@ -155,6 +145,8 @@ def call_llm_text(
     provider = force_provider or get_llm_provider()
 
     if provider in ("openai", "openrouter", "groq"):
+        if force_provider in ("openrouter", "groq") and not _has_key(force_provider):
+            raise RuntimeError(f"{force_provider}: chave ausente em config/api_keys.json — pulando.")
         if force_provider in ("openrouter", "groq"):
             url = _PROVIDER_URLS[force_provider]
             default_model = model or (get_openrouter_model("general") if force_provider == "openrouter"
@@ -175,7 +167,7 @@ def call_llm_text(
             resp.raise_for_status()
             return (resp.json()["choices"][0]["message"].get("content") or "").strip()
         except Exception as e:
-            raise RuntimeError(f"OpenRouter/OpenAI-compatible call failed: {e}")
+            raise RuntimeError(f"{force_provider or provider} call failed: {e}")
 
     url, default_model = get_llm_settings()
     endpoint = f"{url}/api/chat"

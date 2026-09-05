@@ -54,7 +54,7 @@ def _resolve_save_path(output_path: str, language: str) -> Path:
         "sql": ".sql", "json": ".json", "rust": ".rs", "go": ".go",
     }
     if output_path:
-        p = Path(output_path)
+        p = Path(output_path).expanduser()
         return p if p.is_absolute() else DESKTOP / p
     ext = ext_map.get((language or "python").lower(), ".py")
     return DESKTOP / f"jarvis_code{ext}"
