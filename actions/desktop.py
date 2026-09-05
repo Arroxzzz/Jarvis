@@ -106,9 +106,9 @@ def _ask_gemini_for_desktop_action(task: str) -> str:
     if _OS == "Windows":
         os_specific = "- ctypes (Windows API calls, read-only)\n- winreg (registry READ only)"
     elif _OS == "Darwin":
-        os_specific = "- subprocess is NOT available; use pyautogui or Path only"
+        os_specific = "- subprocess is NOT available; use Path only"
     else:
-        os_specific = "- subprocess is NOT available; use pyautogui or Path only"
+        os_specific = "- subprocess is NOT available; use Path only"
 
     prompt = f"""You are a desktop automation assistant.
 Current OS: {_OS}
