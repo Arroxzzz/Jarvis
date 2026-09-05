@@ -55,7 +55,13 @@ def _resolve_save_path(output_path: str, language: str) -> Path:
     }
     if output_path:
         p = Path(output_path).expanduser()
-        return p if p.is_absolute() else DESKTOP / p
+        if p.is_absolute():
+            return p
+        # Remove o prefixo redundante quando o modelo já assume a área de trabalho.
+        parts = p.parts
+        if parts and parts[0].lower() == "desktop":
+            p = Path(*parts[1:]) if len(parts) > 1 else Path(p.name)
+        return DESKTOP / p
     ext = ext_map.get((language or "python").lower(), ".py")
     return DESKTOP / f"jarvis_code{ext}"
 

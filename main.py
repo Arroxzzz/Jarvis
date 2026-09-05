@@ -1047,7 +1047,16 @@ class JarvisLive:
                 result = await self._bounded(loop, lambda: desktop_control(parameters=args, player=self.ui), 30, "desktop_control")
 
             elif name == "code_helper":
-                result = await self._bounded(loop, lambda: code_helper(parameters=args, player=self.ui, speak=self.speak), 90, "code_helper")
+                _desc = args.get("description", "") or "o código"
+
+                def _bg_code():
+                    r = code_helper(parameters=args, player=self.ui, speak=None)
+                    self.speak(
+                        f"[CODE_RESULT — fale agora] Resultado da geração de código:\n{r}\n\n"
+                        f"Anuncie brevemente que terminou, em português, Senhor."
+                    )
+                loop.run_in_executor(None, _bg_code)
+                result = f"Criando o código agora, Senhor — {_desc[:60]}. Te aviso quando terminar."
 
             elif name == "dev_agent":
                 _cancel_ev = threading.Event()
@@ -1063,12 +1072,21 @@ class JarvisLive:
                         self._active_cancel_events.remove(_cancel_ev)
 
             elif name == "web_search":
-                result = await self._bounded(loop, lambda: web_search_action(parameters=args, player=self.ui), 30, "web_search")
                 _mode = args.get("mode", "search")
-                if result and not result.startswith("No results") and not result.startswith("Search failed"):
-                    _query = args.get("query") or ", ".join(args.get("items", []))
-                    _label = f"{_mode.upper()} — {_query[:38]}" if _query else _mode.upper()
-                    self.ui.show_content(_label, result)
+                _query = args.get("query") or ", ".join(args.get("items", []))
+
+                def _bg_search():
+                    r = web_search_action(parameters=args, player=self.ui)
+                    if r and not r.startswith("No results") and not r.startswith("Search failed"):
+                        _label = f"{_mode.upper()} — {_query[:38]}" if _query else _mode.upper()
+                        self.ui.show_content(_label, r)
+                    self.speak(
+                        f"[SEARCH_RESULT — fale agora] Resultado da pesquisa sobre "
+                        f"'{_query}':\n{r}\n\nResuma de forma natural e direta em "
+                        f"português, Senhor."
+                    )
+                loop.run_in_executor(None, _bg_search)
+                result = f"Pesquisando sobre {_query}, Senhor. Já aviso o resultado." if _query else "Pesquisando, Senhor."
             elif name == "file_processor":
                 if not args.get("file_path") and self.ui.current_file:
                     args["file_path"] = self.ui.current_file
@@ -1347,6 +1365,8 @@ class JarvisLive:
                         calls = response.tool_call.function_calls
                         for fc in calls:
                             print(f"[JARVIS] 📞 {fc.name}")
+                        # A execução de tools não representa travamento do modelo.
+                        self._last_turn_activity = time.monotonic()
                         self._active_tool_tasks = [
                             asyncio.ensure_future(self._execute_tool(fc)) for fc in calls
                         ]
@@ -1363,6 +1383,7 @@ class JarvisLive:
                         finally:
                             self._active_tool_tasks = []
                         await self._safe_send_tool_response(fn_responses)
+                        self._last_turn_activity = time.monotonic()   # tool concluída — reset watchdog
                         if self._pending_cancel_phrase:
                             _phrase = self._pending_cancel_phrase
                             self._pending_cancel_phrase = None
