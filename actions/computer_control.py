@@ -14,6 +14,7 @@ else:
 import time
 import random
 from pathlib import Path
+from core.paths import get_home_dir, get_desktop_dir
 
 try:
     import pyautogui
@@ -58,11 +59,11 @@ def _get_api_key() -> str:
     return _load_config().get("gemini_api_key", "")
 
 _SAFE_SCREENSHOT_ROOTS = (
-    Path.home(),
+    get_home_dir(),
 )
 
 def _safe_screenshot_path(requested: str | None) -> Path:
-    fallback = Path.home() / "Desktop" / "jarvis_screenshot.png"
+    fallback = get_desktop_dir() / "jarvis_screenshot.png"
     if not requested:
         return fallback
     try:

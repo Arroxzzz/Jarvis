@@ -34,7 +34,8 @@ def _get_desktop() -> Path:
         xdg = os.environ.get("XDG_DESKTOP_DIR", "")
         if xdg and Path(xdg).exists():
             return Path(xdg)
-    return Path.home() / "Desktop"
+    from core.paths import get_home_dir
+    return get_home_dir() / "Desktop"
 
 def _build_sandbox() -> dict:
     import time

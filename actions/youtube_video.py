@@ -183,7 +183,8 @@ def _summarize_with_gemini(transcript: str, video_url: str) -> str:
 def _save_summary(content: str, video_url: str) -> str:
     ts       = datetime.now().strftime("%Y%m%d_%H%M%S")
     filename = f"youtube_summary_{ts}.txt"
-    desktop  = Path.home() / "Desktop"
+    from core.paths import get_desktop_dir
+    desktop  = get_desktop_dir()
     desktop.mkdir(parents=True, exist_ok=True)
     filepath = desktop / filename
 

@@ -1597,6 +1597,12 @@ class JarvisLive:
                 f"{last['summary']} Fale primeiro, sem esperar o usuário responder. "
                 f"Máximo 2 frases curtas. Responda em PT-BR."
             )
+        elif __import__("os").environ.get("JARVIS_NEW_ENVIRONMENT") == "1":
+            prompt = (
+                "Cumprimente o usuário notando que vocês estão em um ambiente "
+                "diferente do habitual (máquina diferente). Pergunte como deve "
+                "chamar esse ambiente/local, em 1-2 frases curtas, PT-BR."
+            )
         else:
             prompt = "Cumprimente o usuário dizendo que está online e pronto, uma frase curta, em PT-BR."
         try:

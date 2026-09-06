@@ -3,6 +3,7 @@ import shutil
 import platform
 from pathlib import Path
 from datetime import datetime
+from core.paths import get_home_dir
 
 try:
     import send2trash
@@ -13,7 +14,7 @@ except ImportError:
 _OS = platform.system()  # "Windows" | "Darwin" | "Linux"
 
 _SAFE_ROOTS: list[Path] = [
-    Path.home(),
+    get_home_dir(),
 ]
 
 def _is_safe_path(target: Path) -> bool:
@@ -32,42 +33,42 @@ def _get_desktop() -> Path:
         xdg = os.environ.get("XDG_DESKTOP_DIR", "")
         if xdg and Path(xdg).exists():
             return Path(xdg)
-    return Path.home() / "Desktop"
+    return get_home_dir() / "Desktop"
 
 def _get_downloads() -> Path:
     if _OS == "Linux":
         xdg = os.environ.get("XDG_DOWNLOAD_DIR", "")
         if xdg and Path(xdg).exists():
             return Path(xdg)
-    return Path.home() / "Downloads"
+    return get_home_dir() / "Downloads"
 
 def _get_documents() -> Path:
     if _OS == "Linux":
         xdg = os.environ.get("XDG_DOCUMENTS_DIR", "")
         if xdg and Path(xdg).exists():
             return Path(xdg)
-    return Path.home() / "Documents"
+    return get_home_dir() / "Documents"
 
 def _get_pictures() -> Path:
     if _OS == "Linux":
         xdg = os.environ.get("XDG_PICTURES_DIR", "")
         if xdg and Path(xdg).exists():
             return Path(xdg)
-    return Path.home() / "Pictures"
+    return get_home_dir() / "Pictures"
 
 def _get_music() -> Path:
     if _OS == "Linux":
         xdg = os.environ.get("XDG_MUSIC_DIR", "")
         if xdg and Path(xdg).exists():
             return Path(xdg)
-    return Path.home() / "Music"
+    return get_home_dir() / "Music"
 
 def _get_videos() -> Path:
     if _OS == "Linux":
         xdg = os.environ.get("XDG_VIDEOS_DIR", "")
         if xdg and Path(xdg).exists():
             return Path(xdg)
-    return Path.home() / "Videos"
+    return get_home_dir() / "Videos"
 
 
 def _resolve_path(raw: str) -> Path:
@@ -78,7 +79,7 @@ def _resolve_path(raw: str) -> Path:
         "pictures":  _get_pictures(),
         "music":     _get_music(),
         "videos":    _get_videos(),
-        "home":      Path.home(),
+        "home":      get_home_dir(),
     }
     raw   = raw.strip().strip('"').strip("'")
     lower = raw.lower()

@@ -28,7 +28,8 @@ def _get_os() -> str:
 
 
 def _scripts_dir() -> Path:
-    d = Path.home() / ".jarvis" / "reminders"
+    from core.paths import get_home_dir
+    d = get_home_dir() / ".jarvis" / "reminders"
     d.mkdir(parents=True, exist_ok=True)
     return d
 

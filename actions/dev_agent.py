@@ -6,6 +6,7 @@ import time
 import threading
 from pathlib import Path
 from core.llm_client import gemini_call_resilient
+from core.paths import get_home_dir
 
 
 def get_base_dir():
@@ -16,7 +17,7 @@ def get_base_dir():
 
 BASE_DIR         = get_base_dir()
 API_CONFIG_PATH  = BASE_DIR / "config" / "api_keys.json"
-PROJECTS_DIR     = Path.home() / "Desktop" / "JarvisProjects"
+PROJECTS_DIR     = get_home_dir() / "Desktop" / "JarvisProjects"
 MAX_FIX_ATTEMPTS = 5
 MODEL_PLANNER    = "gemini-flash-latest"
 MODEL_WRITER     = "gemini-flash-latest"
