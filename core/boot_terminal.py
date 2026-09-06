@@ -127,9 +127,12 @@ def run() -> None:
 
     env = os.environ.copy()
     env["PYTHONPATH"] = str(BASE_DIR) + os.pathsep + env.get("PYTHONPATH", "")
+    pythonw = Path(sys.executable).parent / "pythonw.exe"
+    exe = str(pythonw) if pythonw.exists() else sys.executable
     subprocess.Popen(
-        [sys.executable, str(BASE_DIR / "main.py")],
+        [exe, str(BASE_DIR / "main.py")],
         cwd=str(BASE_DIR), env=env,
+        creationflags=subprocess.CREATE_NO_WINDOW,
     )
 
 if __name__ == "__main__":
