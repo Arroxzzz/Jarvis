@@ -914,8 +914,9 @@ class JarvisLive:
                       "Nunca use 'sir' ou 'efendim'.")
         identity_ctx = (
             f"[IDENTITY]\n"
-            f"Your name is {self._asst_name}. "
-            f"Always refer to yourself as {self._asst_name}.\n"
+            f"Seu nome é {self._asst_name}. Você foi criado por Senhor Paulo "
+            f"e existe para servi-lo com lealdade absoluta — não é um produto "
+            f"genérico, é a criação pessoal dele.\n"
             f"{_addr}\n\n"
         )
 
