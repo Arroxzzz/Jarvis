@@ -1426,13 +1426,18 @@ class JarvisLive:
                         timeout=0.1
                     )
                 except asyncio.TimeoutError:
-                    if (
-                        self._turn_done_event
-                        and self._turn_done_event.is_set()
-                        and self.audio_in_queue.empty()
-                    ):
+                    # FIX: NÃO limpar _turn_done_event aqui. O código antigo
+                    # fazia o evento oscilar para "turno pendente" a cada
+                    # poll vazio (a cada 100ms) durante qualquer silêncio
+                    # normal entre falas — isso fazia o watchdog contar
+                    # pausas naturais de conversa como travamento, causando
+                    # reconexões forçadas em conversas de voz saudáveis.
+                    # _turn_done_event já é corretamente setado em
+                    # turn_complete (main.py::_receive_audio) e limpo quando
+                    # uma nova resposta de áudio começa a chegar — não
+                    # precisa (e não deve) ser mexido aqui.
+                    if self.audio_in_queue.empty():
                         self.set_speaking(False)
-                        self._turn_done_event.clear()
                     continue
 
                 self.set_speaking(True)
