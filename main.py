@@ -673,6 +673,36 @@ TOOL_DECLARATIONS = [
             "required": ["category", "key", "value"]
         }
     },
+    {
+        "name": "knowledge_note",
+        "description": (
+            "Gerencia notas de conhecimento pessoal em Markdown (estilo Obsidian) — "
+            "diferente de save_memory (que guarda fatos curtos estruturados). Use "
+            "para anotações mais longas: resumos de aula, ideias de projeto, "
+            "planejamento pessoal. Ações: write (criar/sobrescrever), append "
+            "(adicionar ao final), read, list, search."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "action":  {"type": "STRING", "description": "write | append | read | list | search"},
+                "name":    {"type": "STRING", "description": "Nome da nota (sem extensão)"},
+                "content": {"type": "STRING", "description": "Conteúdo para write/append"},
+                "query":   {"type": "STRING", "description": "Termo de busca para search"},
+            },
+            "required": ["action"]
+        }
+    },
+    {
+        "name": "sync_memory",
+        "description": (
+            "Sincroniza memória e notas de conhecimento com a nuvem (Supabase), de "
+            "forma criptografada. Use APENAS quando o usuário pedir explicitamente "
+            "('sincronize', 'salve na nuvem', 'sincronize tudo'). Nunca chame "
+            "proativamente ou por iniciativa própria."
+        ),
+        "parameters": {"type": "OBJECT", "properties": {}}
+    },
 ]
 
 class JarvisLive:
@@ -972,6 +1002,42 @@ class JarvisLive:
             return types.FunctionResponse(
                 id=fc.id, name=name,
                 response={"result": "ok", "silent": True}
+            )
+
+        if name == "knowledge_note":
+            from core.knowledge_vault import write_note, read_note, list_notes, search_notes
+            action = args.get("action", "read")
+            try:
+                if action == "write":
+                    result = write_note(args.get("name", ""), args.get("content", ""))
+                elif action == "append":
+                    result = write_note(args.get("name", ""), args.get("content", ""), append=True)
+                elif action == "read":
+                    result = read_note(args.get("name", ""))
+                elif action == "list":
+                    notes = list_notes()
+                    result = ("Notas: " + ", ".join(notes)) if notes else "Nenhuma nota ainda."
+                elif action == "search":
+                    result = search_notes(args.get("query", ""))
+                else:
+                    result = f"Ação desconhecida: {action}"
+            except Exception as e:
+                result = f"Erro no vault de conhecimento: {e}"
+            if not self.ui.muted:
+                self.ui.set_state("LISTENING")
+            return types.FunctionResponse(
+                id=fc.id, name=name,
+                response={"result": result}
+            )
+
+        if name == "sync_memory":
+            self.ui.write_log("SYS: Sincronização solicitada — aguardando senha mestra.")
+            result = "Sincronização requer senha mestra — funcionalidade de prompt seguro pendente de UI dedicada."
+            if not self.ui.muted:
+                self.ui.set_state("LISTENING")
+            return types.FunctionResponse(
+                id=fc.id, name=name,
+                response={"result": result}
             )
 
         loop   = asyncio.get_event_loop()

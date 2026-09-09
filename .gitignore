@@ -14,6 +14,8 @@ env/
 
 # ── Runtime state ────────────────────────────────────────────────────────
 memory/*.json
+knowledge/*.md
+memory/sync_state.json
 *.log
 
 # ── Editor / OS ──────────────────────────────────────────────────────────

@@ -80,3 +80,17 @@ def secure_wipe(path: Path) -> None:
         shutil.rmtree(path, ignore_errors=True)
     except Exception:
         shutil.rmtree(path, ignore_errors=True)
+
+
+def encrypt_bytes(data: bytes, password: str) -> bytes:
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+    key = _derive_key(password)
+    iv = os.urandom(12)
+    return iv + AESGCM(key).encrypt(iv, data, None)
+
+
+def decrypt_bytes(enc: bytes, password: str) -> bytes:
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+    key = _derive_key(password)
+    iv, ct = enc[:12], enc[12:]
+    return AESGCM(key).decrypt(iv, ct, None)
