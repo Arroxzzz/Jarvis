@@ -1031,8 +1031,23 @@ class JarvisLive:
             )
 
         if name == "sync_memory":
-            self.ui.write_log("SYS: Sincronização solicitada — aguardando senha mestra.")
-            result = "Sincronização requer senha mestra — funcionalidade de prompt seguro pendente de UI dedicada."
+            self.ui.write_log("SYS: Sincronizando com a nuvem...")
+
+            def _bg_sync():
+                self._bg_tasks_pending += 1
+                try:
+                    from core.sync_manager import sync_all
+                    r = sync_all()
+                    self.ui.write_log(f"SYS: {r}")
+                    self.speak(f"[SYNC_RESULT — fale agora] {r} Informe brevemente em PT-BR.")
+                except Exception as e:
+                    self.ui.write_log(f"SYS: ⚠ Falha no sync: {e}")
+                finally:
+                    self._bg_tasks_pending = max(0, self._bg_tasks_pending - 1)
+
+            loop = asyncio.get_event_loop()
+            loop.run_in_executor(None, _bg_sync)
+            result = "Sincronizando agora, Senhor. Te aviso quando terminar."
             if not self.ui.muted:
                 self.ui.set_state("LISTENING")
             return types.FunctionResponse(
@@ -1445,6 +1460,12 @@ class JarvisLive:
                         calls = response.tool_call.function_calls
                         for fc in calls:
                             print(f"[JARVIS] 📞 {fc.name}")
+                        # _pending_cancel_phrase pertence ao turno ANTERIOR
+                        # (interrupção antes do comando atual). Limpar aqui
+                        # garante que ele não seja injetado no meio de um
+                        # ciclo de tool — causa raiz da frase de cancelamento
+                        # espúria e da resposta dupla.
+                        self._pending_cancel_phrase = None
                         # A execução de tools não representa travamento do modelo.
                         self._last_turn_activity = time.monotonic()
                         self._active_tool_tasks = [
@@ -1464,10 +1485,14 @@ class JarvisLive:
                             self._active_tool_tasks = []
                         await self._safe_send_tool_response(fn_responses)
                         self._last_turn_activity = time.monotonic()   # tool concluída — reset watchdog
-                        if self._pending_cancel_phrase:
+                        if self._pending_cancel_phrase and not self._active_tool_tasks:
                             _phrase = self._pending_cancel_phrase
                             self._pending_cancel_phrase = None
                             await self._safe_send_content([{"text": _phrase}])
+                        elif self._pending_cancel_phrase and self._active_tool_tasks:
+                            # Tool ativa — descartar a frase de cancelamento
+                            # em vez de injetá-la no meio do ciclo.
+                            self._pending_cancel_phrase = None
         except Exception as e:
             print(f"[JARVIS] ❌ Recv: {e}")
             traceback.print_exc()
