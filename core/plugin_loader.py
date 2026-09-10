@@ -9,6 +9,7 @@ toggling a plugin does not require restarting the app or re-importing anything.
 from __future__ import annotations
 
 import importlib.util
+import concurrent.futures
 import inspect
 import re
 import sys
@@ -63,7 +64,18 @@ class PluginRegistry:
         if not get_plugin_enabled(name):
             return f"The '{name}' plugin is currently disabled."
         try:
-            return _call_run(rec.run, parameters, player, session_memory) or "Done."
+            executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+            future = executor.submit(
+                _call_run, rec.run, parameters, player, session_memory
+            )
+            try:
+                result = future.result(timeout=60.0)
+            except concurrent.futures.TimeoutError:
+                future.cancel()
+                return f"Plugin '{name}' excedeu o tempo limite de 60s, Senhor."
+            finally:
+                executor.shutdown(wait=False, cancel_futures=True)
+            return result or "Done."
         except Exception as e:
             self._logger(f"Plugin '{name}' crashed during run(): {e}")
             traceback.print_exc()

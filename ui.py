@@ -10,6 +10,7 @@ import sys
 import threading
 import time
 from pathlib import Path
+from core.paths import get_home_dir
 
 import psutil
 
@@ -798,7 +799,7 @@ class FileDropZone(QWidget):
 
     def _browse(self):
         path, _ = QFileDialog.getOpenFileName(
-            self, "Select a file for JARVIS", str(Path.home()),
+            self, "Select a file for JARVIS", str(get_home_dir()),
             "All Files (*.*);;"
             "Images (*.jpg *.jpeg *.png *.gif *.webp *.bmp *.svg);;"
             "Documents (*.pdf *.docx *.txt *.md *.pptx);;"
@@ -1899,7 +1900,7 @@ class MainWindow(QMainWindow):
             ~/Schreibtisch, ~/Bureau, …).
         Falls back to ~/Desktop only as a last resort.
         """
-        home = Path.home()
+        home = get_home_dir()
         _os = platform.system()
 
         if _os == "Windows":
@@ -2666,10 +2667,10 @@ class MainWindow(QMainWindow):
                 finally:
                     winreg.CloseKey(key)
             elif _OS == "Darwin":
-                return (Path.home() / "Library" / "LaunchAgents"
+                return (get_home_dir() / "Library" / "LaunchAgents"
                         / "com.jarvis.assistant.plist").exists()
             else:
-                return (Path.home() / ".config" / "autostart" / "jarvis.desktop").exists()
+                return (get_home_dir() / ".config" / "autostart" / "jarvis.desktop").exists()
         except Exception:
             return False
 
@@ -2690,7 +2691,7 @@ class MainWindow(QMainWindow):
                                       f'"{exe}" "{script}"')
                 winreg.CloseKey(reg)
             elif _OS == "Darwin":
-                plist_dir = Path.home() / "Library" / "LaunchAgents"
+                plist_dir = get_home_dir() / "Library" / "LaunchAgents"
                 plist_dir.mkdir(parents=True, exist_ok=True)
                 plist = plist_dir / "com.jarvis.assistant.plist"
                 if currently_on:
@@ -2710,7 +2711,7 @@ class MainWindow(QMainWindow):
                         '</dict></plist>\n'
                     )
             else:
-                desk_dir = Path.home() / ".config" / "autostart"
+                desk_dir = get_home_dir() / ".config" / "autostart"
                 desk_dir.mkdir(parents=True, exist_ok=True)
                 desk = desk_dir / "jarvis.desktop"
                 if currently_on:

@@ -206,7 +206,10 @@ def resilient_text_call(prompt: str, system: str | None = None,
     if task_type not in GROQ_MODELS:
         task_type = "general"
 
-    for model in GROQ_MODELS[task_type]:
+    groq_models = GROQ_MODELS.get(task_type, [])
+    if not groq_models:
+        print(f"[LLM] Groq task_type='{task_type}': nenhum modelo configurado — pulando para OpenRouter.")
+    for model in groq_models:
         try:
             return call_llm_text(prompt, system=system, model=model,
                                  timeout=timeout, force_provider="groq")
@@ -237,7 +240,7 @@ def resilient_vision_call(prompt: str, image_bytes: bytes, mime_type: str = "ima
         ],
     }]
 
-    for provider, models in (("groq", GROQ_MODELS["vision"]),
+    for provider, models in (("groq", GROQ_MODELS.get("vision", [])),
                              ("openrouter", FREE_MODELS["vision"])):
         url = _PROVIDER_URLS[provider]
         for model in models:
