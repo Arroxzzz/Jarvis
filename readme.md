@@ -494,7 +494,7 @@ O projeto utiliza PyQt6 e possui componentes relacionados a:
 - interação com arquivos;
 - câmera;
 - visualização de informações;
-- dashboard.
+- personalização da interface.
 
 A interface continuará sendo reconstruída e evoluída conforme a identidade do J.A.R.V.I.S. amadurece.
 
@@ -537,8 +537,8 @@ JARVIS/
 ├── memory/
 │   └── ...
 │
-└── dashboard/
-    └── server.py
+└── plugins/
+   └── ...
 ```
 
 A estrutura pode mudar conforme a arquitetura do sistema evolui.

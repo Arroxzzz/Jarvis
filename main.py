@@ -716,7 +716,6 @@ class JarvisLive:
         self._loop                = None
         self._is_speaking         = False
         self._speaking_lock       = threading.Lock()
-        self._phone_active        = False   # True while phone mic is streaming; pauses PC mic
         self._pending_vision       = None    # (img_bytes, mime_type, question, angle) to inject after tool response
         self._vision_cam_active    = False   # True if camera was opened for vision → auto-close after response
         self._vision_close_pending = False   # True after vision injected; next turn_complete closes camera
@@ -724,11 +723,8 @@ class JarvisLive:
         self._vision_busy          = False   # True while a vision capture/inject cycle is in flight
         self._interrupted          = False   # True while draining audio after user interrupt
         self.ui.on_text_command   = self._on_text_command
-        self.ui.on_remote_clicked = self._make_remote_key
         self.ui.on_interrupt      = self.interrupt
         self._turn_done_event: asyncio.Event | None = None
-        self._dashboard     = None
-        self._phone_relay_task: asyncio.Task | None = None
         self._briefing_sent    = False          # morning briefing fires once per process
         self._sys_monitor      = SystemMonitor()  # persistent cooldown state
         self._proactive        = ProactiveEngine()
@@ -743,8 +739,6 @@ class JarvisLive:
         self._last_turn_activity: float = time.monotonic()   # watchdog anti-travamento de mic
         self._watchdog_force_count: int = 0   # disparos consecutivos do watchdog — reset em turno saudável
         self._bg_tasks_pending: int = 0       # tools rodando em background (code_helper/web_search assíncronos)
-        self._phone_relay_task: asyncio.Task | None = None
-
         self._enhanced_live = True  # affective dialog + proactive audio; auto-disabled if the server rejects them
         self._live_candidates: list[str] = []   # preenchido em _resolve_live_model()
         self._live_idx = 0                      # índice do candidato atual em uso
@@ -798,52 +792,6 @@ class JarvisLive:
             asyncio.run_coroutine_threadsafe(_say(), loop)
         except Exception as e:
             print(f"[PluginSay] {e}")
-
-    async def _ensure_dashboard_started(self):
-        if self._dashboard is not None:
-            return self._dashboard
-        try:
-            from dashboard.server import DashboardServer
-            self._dashboard = DashboardServer()
-            self._dashboard.set_connect_callback(self._on_phone_connected)
-            asyncio.create_task(self._dashboard.serve())
-            asyncio.create_task(self._process_dashboard_commands())
-            if self.session is not None and (self._phone_relay_task is None or self._phone_relay_task.done()):
-                # Sessão Live já ativa: dispara o relay de áudio do telefone
-                # já agora, sem esperar a próxima reconexão.
-                self._phone_relay_task = asyncio.create_task(self._relay_phone_audio())
-            self.ui.write_log("SYS: Remote Dashboard iniciado.")
-        except Exception as e:
-            print(f"[Dashboard] Disabled: {e}")
-            self._dashboard = None
-        return self._dashboard
-
-    def _make_remote_key(self):
-        """Called from Qt main thread when user presses Remote Control."""
-        if self._dashboard is None:
-            if not self._loop:
-                self.ui.write_log("SYS: JARVIS ainda não está pronto.")
-                return None
-            try:
-                future = asyncio.run_coroutine_threadsafe(
-                    self._ensure_dashboard_started(), self._loop
-                )
-                future.result(timeout=15)
-            except Exception as e:
-                self.ui.write_log(f"SYS: Falha ao iniciar o Dashboard: {e}")
-                return None
-
-        if self._dashboard is None:
-            self.ui.write_log(
-                "SYS: Dashboard indisponível. "
-                "Rode: pip install fastapi \"uvicorn[standard]\" cryptography"
-            )
-            return None
-
-        key    = self._dashboard.new_key()
-        url    = self._dashboard.get_url()
-        manual = self._dashboard.get_manual_url()
-        return url, key, f"{url}/auto-login?key={key}", manual
 
     def _on_text_command(self, text: str):
         if not self._loop or not self.session:
@@ -1328,7 +1276,7 @@ class JarvisLive:
             # O VAD do próprio Gemini Live já lida com sobreposição de turnos.
             # Gating por turn_done_event foi removido para evitar silenciar o
             # mic quando uma conexão cai no meio de uma resposta.
-            if jarvis_speaking or self.ui.muted or self._phone_active:
+            if jarvis_speaking or self.ui.muted:
                 return
             try:
                 data = indata.tobytes()
@@ -1408,24 +1356,12 @@ class JarvisLive:
                             if full_in:
                                 self.ui.write_log(f"You: {full_in}")
                                 self._session_log.append(f"User: {full_in}")
-                                if self._dashboard:
-                                    asyncio.create_task(self._dashboard.broadcast({
-                                        "type": "log", "speaker": "user",
-                                        "text": full_in,
-                                        "ts": datetime.now().isoformat(),
-                                    }))
                             in_buf = []
 
                             full_out = " ".join(out_buf).strip()
                             if full_out:
                                 self.ui.write_log(f"{self._asst_name}: {full_out}")
                                 self._session_log.append(f"{self._asst_name}: {full_out}")
-                                if self._dashboard:
-                                    asyncio.create_task(self._dashboard.broadcast({
-                                        "type": "log", "speaker": "jarvis",
-                                        "text": full_out,
-                                        "ts": datetime.now().isoformat(),
-                                    }))
                             out_buf = []
 
                             # Vision injection: model finished tool-response turn → now send the image
@@ -1860,57 +1796,6 @@ class JarvisLive:
             except Exception as e:
                 print(f"[Proactive] ⚠️ {e}")
 
-    # ── Phone audio relay ────────────────────────────────────────────────────────
-
-    async def _relay_phone_audio(self) -> None:
-        """Forward phone mic PCM chunks from dashboard queue into the Gemini Live session."""
-        q = self._dashboard._phone_audio_queue
-        while True:
-            try:
-                chunk = await asyncio.wait_for(q.get(), timeout=1.0)
-            except asyncio.TimeoutError:
-                # No audio for 1 s → phone mic inactive, give PC mic back
-                self._phone_active = False
-                continue
-            self._phone_active = True   # phone is streaming — silence PC mic
-            with self._speaking_lock:
-                speaking = self._is_speaking
-            if not speaking and not self.ui.muted:
-                try:
-                    self.out_queue.put_nowait(chunk)
-                except asyncio.QueueFull:
-                    pass
-
-    def _on_phone_connected(self) -> None:
-        self.ui.write_log("SYS: Phone connected via Remote Dashboard.")
-        self.ui.notify_phone_connected()
-
-    # ── dashboard command relay ─────────────────────────────────────────────
-
-    async def _process_dashboard_commands(self) -> None:
-        while True:
-            try:
-                text = await asyncio.wait_for(
-                    self._dashboard._command_queue.get(), timeout=0.5
-                )
-                if not text:
-                    continue
-                # Wait up to 8s for session to become ready after a wake
-                for _ in range(80):
-                    if self.session:
-                        break
-                    await asyncio.sleep(0.1)
-                if self.session:
-                    await self._safe_send_content([{"text": text}])
-                    self.ui.write_log(f"[Web]: {text}")
-                else:
-                    print(f"[Dashboard] Dropped command (no session): {text}")
-            except asyncio.TimeoutError:
-                pass
-            except Exception as e:
-                print(f"[Dashboard] Command error: {e}")
-                await asyncio.sleep(0.5)
-
     # ── main loop ───────────────────────────────────────────────────────────
 
     async def _resolve_live_model(self) -> None:
@@ -1960,10 +1845,6 @@ class JarvisLive:
 
     async def run(self):
         self._loop = asyncio.get_event_loop()
-
-        # Dashboard agora é LAZY — só sobe (e só mexe no firewall) quando o
-        # usuário clica em "Remote Control". Ver _ensure_dashboard_started().
-        self._dashboard = None
 
         if not await asyncio.to_thread(_validate_gemini_key, _get_api_key()):
             self.ui.write_log("ERR: API key invalid — please re-enter your key.")
@@ -2017,9 +1898,6 @@ class JarvisLive:
                     if not self._boot_greeted:
                         self._boot_greeted = True
                         tg.create_task(self._send_boot_greeting())
-                    if self._dashboard:
-                        await self._dashboard.broadcast({"type": "status", "state": "active"})
-
                     tg.create_task(self._send_realtime())
                     tg.create_task(self._listen_audio())
                     tg.create_task(self._receive_audio())
@@ -2028,9 +1906,6 @@ class JarvisLive:
                     tg.create_task(self._turn_watchdog())
                     tg.create_task(self._run_background_monitor())
                     tg.create_task(self._run_proactive_mode())
-                    if self._dashboard:
-                        self._phone_relay_task = tg.create_task(self._relay_phone_audio())
-
                     # Morning briefing — fires once per process launch (if enabled)
                     if not self._briefing_sent and get_brief_enabled():
                         self._briefing_sent = True
@@ -2135,9 +2010,6 @@ class JarvisLive:
 
             self.set_speaking(False)
             self.ui.set_state("SLEEPING")
-
-            if self._dashboard:
-                await self._dashboard.broadcast({"type": "status", "state": "sleeping"})
 
             delay = getattr(self, "_conn_backoff", 3)
             print(f"[JARVIS] Reconnecting in {delay}s...")

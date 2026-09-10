@@ -1,5 +1,8 @@
 # CURRENT_TASK — PRÓXIMA AÇÃO: P3 (Segurança Crítica)
 
+## Concluído nesta rodada
+- Dashboard remoto removido do código, da UI e das dependências exclusivas.
+
 ## Contexto
 P0, P1 e P2 validados em campo e consolidados em PROJECT_STATE.md.
 Gemini isolado para voz confirmado. Groq→OpenRouter operacional.
@@ -11,11 +14,9 @@ Decidir: manter exceção documentada, ou migrar para Whisper local
 (zero custo, mas consome CPU — avaliar frente à regra de jogos).
 
 ## PRÓXIMA AÇÃO IMEDIATA — Fase P3
-1. `dashboard/server.py`: AES-256-CBC → AES-GCM; derivação de chave
-   SHA256 puro → PBKDF2 (lib já disponível em crypto-js.min.js).
-2. `actions/desktop.py::_build_sandbox`: remover `pyautogui` do sandbox
+1. `actions/desktop.py::_build_sandbox`: remover `pyautogui` do sandbox
    de código gerado por IA (hoje é RCE de fato via automação de teclado).
-3. `actions/computer_control.py::user_data`: allowlist de campos
+2. `actions/computer_control.py::user_data`: allowlist de campos
    permitidos (hoje qualquer chave de `identity` é exfiltrável).
 
 ## Depois de P3 — ordem definida

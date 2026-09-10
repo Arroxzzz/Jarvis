@@ -16,8 +16,6 @@
   valida `PLUGIN` dict + `run()`, isola exceptions, dispatch via `main.py::_execute_tool`.
 - Memória: `memory/memory_manager.py` (long_term.json: identity/preferences/
   projects/relationships/wishes/notes/sessions/monitors).
-- Dashboard remoto: `dashboard/server.py` (FastAPI, AES-256-CBC, QR pairing,
-  WS bidirecional, upload de arquivos).
 - Automação desktop: `actions/computer_control.py`, `computer_settings.py`,
   `browser_control.py` (Playwright, perfis reais do usuário).
 
