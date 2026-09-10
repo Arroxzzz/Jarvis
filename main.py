@@ -128,9 +128,17 @@ def _read_config() -> dict:
 
 def _write_config_key(key: str, value) -> None:
     try:
+        import os
+        import tempfile
         data = _read_config()
         data[key] = value
-        API_CONFIG_PATH.write_text(json.dumps(data, indent=4), encoding="utf-8")
+        with tempfile.NamedTemporaryFile(
+            "w", dir=API_CONFIG_PATH.parent, delete=False,
+            encoding="utf-8", suffix=".tmp"
+        ) as tf:
+            json.dump(data, tf, indent=4)
+            tmp = tf.name
+        os.replace(tmp, str(API_CONFIG_PATH))
     except Exception as e:
         print(f"[JARVIS] ⚠️ Config write failed ({key}): {e}")
 
@@ -716,6 +724,7 @@ class JarvisLive:
         self._loop                = None
         self._is_speaking         = False
         self._speaking_lock       = threading.Lock()
+        self._mic_available       = True   # False = modo texto apenas
         self._pending_vision       = None    # (img_bytes, mime_type, question, angle) to inject after tool response
         self._vision_cam_active    = False   # True if camera was opened for vision → auto-close after response
         self._vision_close_pending = False   # True after vision injected; next turn_complete closes camera
@@ -739,6 +748,7 @@ class JarvisLive:
         self._last_turn_activity: float = time.monotonic()   # watchdog anti-travamento de mic
         self._watchdog_force_count: int = 0   # disparos consecutivos do watchdog — reset em turno saudável
         self._bg_tasks_pending: int = 0       # tools rodando em background (code_helper/web_search assíncronos)
+        self._bg_tasks_lock = threading.Lock()
         self._enhanced_live = True  # affective dialog + proactive audio; auto-disabled if the server rejects them
         self._live_candidates: list[str] = []   # preenchido em _resolve_live_model()
         self._live_idx = 0                      # índice do candidato atual em uso
@@ -753,6 +763,14 @@ class JarvisLive:
         self.ui.write_log(f"SYS: JARVIS Online — {_pvalid} módulo(s) carregado(s).")
         self.ui.get_plugins = self._plugin_registry.list_for_ui
         self.ui.request_say = self.plugin_say   # plugins: mid-task speech channel
+
+    def _detect_mic(self) -> bool:
+        """Retorna True se há ao menos um dispositivo de entrada disponível."""
+        try:
+            devices = sd.query_devices()
+            return any(device.get("max_input_channels", 0) > 0 for device in devices)
+        except Exception:
+            return False
 
     async def _safe_send_content(self, parts: list, turn_complete: bool = True) -> None:
         """Serializa envios de conteúdo para evitar chamadas concorrentes na sessão Live."""
@@ -954,21 +972,26 @@ class JarvisLive:
 
         if name == "knowledge_note":
             from core.knowledge_vault import write_note, read_note, list_notes, search_notes
-            action = args.get("action", "read")
-            try:
+
+            def _run_knowledge():
+                action = args.get("action", "read")
                 if action == "write":
-                    result = write_note(args.get("name", ""), args.get("content", ""))
-                elif action == "append":
-                    result = write_note(args.get("name", ""), args.get("content", ""), append=True)
-                elif action == "read":
-                    result = read_note(args.get("name", ""))
-                elif action == "list":
+                    return write_note(args.get("name", ""), args.get("content", ""))
+                if action == "append":
+                    return write_note(args.get("name", ""), args.get("content", ""), append=True)
+                if action == "read":
+                    return read_note(args.get("name", ""))
+                if action == "list":
                     notes = list_notes()
-                    result = ("Notas: " + ", ".join(notes)) if notes else "Nenhuma nota ainda."
-                elif action == "search":
-                    result = search_notes(args.get("query", ""))
-                else:
-                    result = f"Ação desconhecida: {action}"
+                    return ("Notas: " + ", ".join(notes)) if notes else "Nenhuma nota ainda."
+                if action == "search":
+                    return search_notes(args.get("query", ""))
+                return f"Ação desconhecida: {action}"
+
+            try:
+                result = await self._bounded(
+                    asyncio.get_event_loop(), _run_knowledge, 10, "knowledge_note"
+                )
             except Exception as e:
                 result = f"Erro no vault de conhecimento: {e}"
             if not self.ui.muted:
@@ -982,7 +1005,8 @@ class JarvisLive:
             self.ui.write_log("SYS: Sincronizando com a nuvem...")
 
             def _bg_sync():
-                self._bg_tasks_pending += 1
+                with self._bg_tasks_lock:
+                    self._bg_tasks_pending += 1
                 try:
                     from core.sync_manager import sync_all
                     r = sync_all()
@@ -991,7 +1015,8 @@ class JarvisLive:
                 except Exception as e:
                     self.ui.write_log(f"SYS: ⚠ Falha no sync: {e}")
                 finally:
-                    self._bg_tasks_pending = max(0, self._bg_tasks_pending - 1)
+                    with self._bg_tasks_lock:
+                        self._bg_tasks_pending = max(0, self._bg_tasks_pending - 1)
 
             loop = asyncio.get_event_loop()
             loop.run_in_executor(None, _bg_sync)
@@ -1082,15 +1107,27 @@ class JarvisLive:
                 _desc = args.get("description", "") or "o código"
 
                 def _bg_code():
-                    self._bg_tasks_pending += 1
+                    import concurrent.futures
+                    with self._bg_tasks_lock:
+                        self._bg_tasks_pending += 1
                     try:
-                        r = code_helper(parameters=args, player=self.ui, speak=None)
+                        executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+                        future = executor.submit(
+                            code_helper, parameters=args, player=self.ui, speak=None
+                        )
+                        try:
+                            r = future.result(timeout=120)
+                        except concurrent.futures.TimeoutError:
+                            r = "Tempo limite atingido na geração de código, Senhor."
+                        finally:
+                            executor.shutdown(wait=False, cancel_futures=True)
                         self.speak(
                             f"[CODE_RESULT — fale agora] Resultado da geração de código:\n{r}\n\n"
                             f"Anuncie brevemente que terminou, em português, Senhor."
                         )
                     finally:
-                        self._bg_tasks_pending = max(0, self._bg_tasks_pending - 1)
+                        with self._bg_tasks_lock:
+                            self._bg_tasks_pending = max(0, self._bg_tasks_pending - 1)
                 loop.run_in_executor(None, _bg_code)
                 result = f"Criando o código agora, Senhor — {_desc[:60]}. Te aviso quando terminar."
 
@@ -1112,7 +1149,8 @@ class JarvisLive:
                 _query = args.get("query") or ", ".join(args.get("items", []))
 
                 def _bg_search():
-                    self._bg_tasks_pending += 1
+                    with self._bg_tasks_lock:
+                        self._bg_tasks_pending += 1
                     try:
                         r = web_search_action(parameters=args, player=self.ui)
                         if r and not r.startswith("No results") and not r.startswith("Search failed"):
@@ -1124,7 +1162,8 @@ class JarvisLive:
                             f"português, Senhor."
                         )
                     finally:
-                        self._bg_tasks_pending = max(0, self._bg_tasks_pending - 1)
+                        with self._bg_tasks_lock:
+                            self._bg_tasks_pending = max(0, self._bg_tasks_pending - 1)
                 loop.run_in_executor(None, _bg_search)
                 result = f"Pesquisando sobre {_query}, Senhor. Já aviso o resultado." if _query else "Pesquisando, Senhor."
             elif name == "file_processor":
@@ -1233,6 +1272,8 @@ class JarvisLive:
         )
 
     async def _send_realtime(self):
+        if not self._mic_available:
+            return
         _sent = 0
         _last_log = time.monotonic()
         while True:
@@ -1687,7 +1728,9 @@ class JarvisLive:
         de áudio nesse intervalo é esperada, não um travamento real."""
         while True:
             await asyncio.sleep(5)
-            if self._active_tool_tasks or self._bg_tasks_pending > 0:
+            with self._bg_tasks_lock:
+                bg_tasks_pending = self._bg_tasks_pending
+            if self._active_tool_tasks or bg_tasks_pending > 0:
                 self._last_turn_activity = time.monotonic()
                 continue
             if self._turn_done_event and not self._turn_done_event.is_set():
@@ -1853,6 +1896,11 @@ class JarvisLive:
             while not self.ui._win._ready:
                 await asyncio.sleep(1)
 
+        self._mic_available = self._detect_mic()
+        if not self._mic_available:
+            self.ui.write_log("SYS: ⚠️ Nenhum microfone detectado — iniciando em Modo Texto.")
+            self.ui.set_mic_mode(False)
+
         await self._resolve_live_model()
 
         while True:
@@ -1898,12 +1946,14 @@ class JarvisLive:
                     if not self._boot_greeted:
                         self._boot_greeted = True
                         tg.create_task(self._send_boot_greeting())
-                    tg.create_task(self._send_realtime())
-                    tg.create_task(self._listen_audio())
+                    if self._mic_available:
+                        tg.create_task(self._send_realtime(), name="send")
+                        tg.create_task(self._listen_audio(), name="listen")
                     tg.create_task(self._receive_audio())
                     tg.create_task(self._play_audio())
                     tg.create_task(self._run_system_monitor())
-                    tg.create_task(self._turn_watchdog())
+                    if self._mic_available:
+                        tg.create_task(self._turn_watchdog(), name="watchdog")
                     tg.create_task(self._run_background_monitor())
                     tg.create_task(self._run_proactive_mode())
                     # Morning briefing — fires once per process launch (if enabled)

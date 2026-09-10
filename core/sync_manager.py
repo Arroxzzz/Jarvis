@@ -61,8 +61,20 @@ def _load_state() -> dict:
     return {}
 
 
+def _obfuscate_key(key: str) -> str:
+    return hashlib.sha256(key.encode()).hexdigest()[:16]
+
+
 def _save_state(state: dict) -> None:
     STATE_PATH.write_text(json.dumps(state, indent=2), encoding="utf-8")
+
+
+def _load_state_key(key: str) -> dict:
+    return _load_state().get(_obfuscate_key(key), {})
+
+
+def _save_state_key(state: dict, key: str, value: dict) -> None:
+    state[_obfuscate_key(key)] = value
 
 
 def _file_hash(path: Path) -> str:
@@ -73,7 +85,7 @@ def _sync_one(path: Path, remote_key: str, password: str, cfg: dict,
              state: dict, hostname: str) -> str:
     local_hash = _file_hash(path) if path.exists() else None
     local_mtime = path.stat().st_mtime if path.exists() else 0
-    known = state.get(remote_key, {})
+    known = _load_state_key(remote_key)
 
     r = requests.get(_bucket_url(cfg, remote_key), headers=_headers(cfg), timeout=15)
     remote_exists = r.status_code == 200
@@ -93,10 +105,10 @@ def _sync_one(path: Path, remote_key: str, password: str, cfg: dict,
     if (local_hash and local_hash != known.get("hash")
             and remote_hash and remote_hash != known.get("hash")
             and local_hash != remote_hash):
-        return (
-            f"⚠ CONFLITO em {remote_key}: editado localmente e na nuvem "
-            f"desde o último sync. Mantendo versão LOCAL, backup remoto preservado."
-        )
+        conflict_path = path.parent / f"{path.stem}_CONFLITO_{int(time.time())}{path.suffix}"
+        conflict_path.write_bytes(remote_plain)
+        return (f"⚠ CONFLITO em {remote_key}: versão remota salva como "
+            f"'{conflict_path.name}'. Local mantida como autoritativa.")
 
     if path.exists() and (not remote_exists or local_hash != remote_hash):
         enc = encrypt_bytes(path.read_bytes(), password)
@@ -114,13 +126,19 @@ def _sync_one(path: Path, remote_key: str, password: str, cfg: dict,
                 if attempt == 2:
                     raise RuntimeError(f"Upload falhou após 3 tentativas: {e}")
                 time.sleep(2)
-        state[remote_key] = {"hash": local_hash, "updated": time.time(), "origin": hostname}
+        _save_state_key(
+            state, remote_key,
+            {"hash": local_hash, "updated": time.time(), "origin": hostname},
+        )
         return f"↑ {remote_key}: enviado para a nuvem"
 
     if remote_exists and remote_hash != local_hash:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(remote_plain)
-        state[remote_key] = {"hash": remote_hash, "updated": time.time(), "origin": "cloud"}
+        _save_state_key(
+            state, remote_key,
+            {"hash": remote_hash, "updated": time.time(), "origin": "cloud"},
+        )
         return f"↓ {remote_key}: baixado da nuvem"
 
     return f"= {remote_key}: nada a fazer"

@@ -185,22 +185,19 @@ def _gemini_headlines(n: int = 5) -> tuple[list[str], str]:
     """Último recurso sem grounding real quando a busca DDG falhar."""
     import re
     raw = resilient_text_call(
-        f"List {n} major current world news headlines, numbered, titles only.",
+        f"List {n} major current world news headlines, numbered, titles only. "
+        f"Return ONLY the numbered list, no extra text.",
         task_type="search",
     )
 
-    headlines = []
-    for line in raw.strip().split("\n"):
-        line = line.strip()
-        if not line:
-            continue
-        # Only accept lines that begin with a number — skips preamble/closing sentences
-        if not re.match(r'^[\d]+[.\)\-]', line):
-            continue
-        clean = re.sub(r'^[\d]+[.\)\-]\s*', '', line)
-        clean = re.sub(r'^\*+\s*',          '', clean).strip()
-        if clean and len(clean) > 10:
-            headlines.append(clean)
+    lines = [line.strip() for line in raw.splitlines() if line.strip()]
+    headlines = [
+        re.sub(r"^\d+[.\)]\s*", "", line)
+        for line in lines
+        if re.match(r"^\d+", line)
+    ]
+    if not headlines:
+        headlines = lines
 
     return headlines[:n], raw.strip()
 

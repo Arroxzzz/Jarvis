@@ -39,6 +39,25 @@ def _get_desktop() -> Path:
 
 def _build_sandbox() -> dict:
     import time
+    from core.paths import get_home_dir
+
+    _copy_allowed = (
+        get_home_dir() / "Desktop",
+        get_home_dir() / "Documents",
+        get_home_dir() / "Downloads",
+    )
+
+    def _allowed_destination(dst: str) -> Path:
+        dst_path = Path(dst).expanduser().resolve()
+        if not any(root == dst_path or root in dst_path.parents for root in _copy_allowed):
+            raise PermissionError(f"Destino não permitido pelo sandbox: {dst}")
+        return dst_path
+
+    def _safe_copy(src: str, dst: str) -> None:
+        shutil.copy2(src, _allowed_destination(dst))
+
+    def _safe_move(src: str, dst: str) -> None:
+        shutil.move(src, _allowed_destination(dst))
 
     safe_builtins = {
         "print": print,
@@ -54,11 +73,8 @@ def _build_sandbox() -> dict:
         "__builtins__": safe_builtins,
         "Path": Path,
         "time": time,
-        "shutil": type("shutil", (), {
-            "copy2":      shutil.copy2,
-            "copytree":   shutil.copytree,
-            "disk_usage": shutil.disk_usage,
-        })(),
+        "shutil_copy": _safe_copy,
+        "shutil_move": _safe_move,
         "os_path": os.path,  
     }
 
@@ -118,7 +134,7 @@ Desktop path: {desktop}
 Generate safe Python code to accomplish the task below.
 Allowed modules ONLY:
 - pathlib.Path (file/folder inspection only, no deletion)
-- shutil.copy2, shutil.copytree, shutil.disk_usage (NO move, NO rmtree)
+- shutil_copy, shutil_move (destinos limitados a Desktop, Documents e Downloads)
 - os_path (os.path equivalent, read-only)
 - time.sleep
 {os_specific}

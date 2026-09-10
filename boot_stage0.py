@@ -12,6 +12,7 @@ from pathlib import Path
 
 # Definindo a raiz do pendrive
 PENDRIVE_ROOT = Path(__file__).parent.resolve()
+RUNTIME_DIR = PENDRIVE_ROOT / ".runtime"
 VAULT_ENC = PENDRIVE_ROOT / "project.enc"
 PYTHON_EMBED = PENDRIVE_ROOT / "python-embed" / "python.exe"
 PYTHONW_EMBED = PENDRIVE_ROOT / "python-embed" / "pythonw.exe"
@@ -58,6 +59,20 @@ def _secure_wipe(path: Path) -> None:
         shutil.rmtree(path, ignore_errors=True)
 
 
+def _cleanup_stale_sessions() -> None:
+    if not RUNTIME_DIR.exists():
+        return
+    import psutil
+    for stale in RUNTIME_DIR.iterdir():
+        if not stale.is_dir():
+            continue
+        try:
+            pid = int(stale.name.rsplit("_", 1)[-1])
+            if psutil.pid_exists(pid):
+                continue
+        except (ValueError, IndexError):
+            pass
+        shutil.rmtree(stale, ignore_errors=True)
 def get_system_specs():
     specs = {}
     specs["date"] = datetime.datetime.now().strftime("%d/%m/%Y %H:%M")
@@ -109,7 +124,8 @@ def run():
         input("\nPressione ENTER para fechar...")
         sys.exit(1)
 
-    session_dir = PENDRIVE_ROOT / ".runtime" / f"session_{os.getpid()}"
+    _cleanup_stale_sessions()
+    session_dir = RUNTIME_DIR / f"session_{os.getpid()}"
 
     max_attempts = 3
     for attempt in range(1, max_attempts + 1):
@@ -160,6 +176,19 @@ def run():
         )
 
         cmd = [exe, "-c", python_inline_code]
+
+        import atexit
+        import signal as _signal
+
+        def _emergency_wipe():
+            _secure_wipe(session_dir)
+
+        def _exit_on_signal(_signum, _frame):
+            raise SystemExit(0)
+
+        atexit.register(_emergency_wipe)
+        for _s in (_signal.SIGTERM, _signal.SIGINT):
+            _signal.signal(_s, _exit_on_signal)
 
         subprocess.run(cmd, cwd=str(abs_session), env=env)
     finally:

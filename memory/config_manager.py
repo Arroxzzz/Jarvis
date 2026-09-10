@@ -1,5 +1,7 @@
 import json
+import os
 import sys
+import tempfile
 from pathlib import Path
 
 def get_base_dir() -> Path:
@@ -13,6 +15,21 @@ CONFIG_FILE = CONFIG_DIR / "api_keys.json"
 
 def ensure_config_dir() -> None:
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def _atomic_write(data: dict, indent: int = 4) -> None:
+    ensure_config_dir()
+    tmp = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            "w", dir=CONFIG_DIR, delete=False, encoding="utf-8", suffix=".tmp"
+        ) as tf:
+            json.dump(data, tf, indent=indent)
+            tmp = tf.name
+        os.replace(tmp, str(CONFIG_FILE))
+    finally:
+        if tmp and os.path.exists(tmp):
+            os.unlink(tmp)
 
 def config_exists() -> bool:
     return CONFIG_FILE.exists()
@@ -29,10 +46,7 @@ def save_api_keys(gemini_api_key: str) -> None:
 
     data["gemini_api_key"] = gemini_api_key.strip()
 
-    CONFIG_FILE.write_text(
-        json.dumps(data, indent=2),
-        encoding="utf-8"
-    )
+    _atomic_write(data, indent=2)
 
 def load_api_keys() -> dict:
     if not CONFIG_FILE.exists():
@@ -72,7 +86,7 @@ def save_assistant_config(assistant_name: str, user_name: str) -> None:
             data = {}
     data["assistant_name"] = assistant_name.strip() or "JARVIS"
     data["user_name"] = user_name.strip()
-    CONFIG_FILE.write_text(json.dumps(data, indent=4), encoding="utf-8")
+    _atomic_write(data)
 
 
 def get_brief_enabled() -> bool:
@@ -88,7 +102,7 @@ def save_brief_enabled(enabled: bool) -> None:
         except Exception:
             data = {}
     data["morning_brief_enabled"] = enabled
-    CONFIG_FILE.write_text(json.dumps(data, indent=4), encoding="utf-8")
+    _atomic_write(data)
 
 
 def get_plugin_enabled(plugin_name: str) -> bool:
@@ -109,4 +123,4 @@ def save_plugin_enabled(plugin_name: str, enabled: bool) -> None:
         plugins_cfg = {}
     plugins_cfg[plugin_name] = enabled
     data["plugins_enabled"] = plugins_cfg
-    CONFIG_FILE.write_text(json.dumps(data, indent=4), encoding="utf-8")
+    _atomic_write(data)

@@ -1499,6 +1499,7 @@ class MainWindow(QMainWindow):
     _cam_stream_sig = pyqtSignal(bool)       # True=start live stream, False=stop
     _cam_frame_sig  = pyqtSignal(bytes)      # live camera frame → HUD area
     _mute_hotkey_sig = pyqtSignal()          # F4 global (pynput) → toggle mute na main thread
+    _mic_mode_sig    = pyqtSignal(bool)
 
     def __init__(self, face_path: str):
         super().__init__()
@@ -1639,6 +1640,7 @@ class MainWindow(QMainWindow):
         self._cam_stream_sig.connect(self._on_cam_stream)
         self._cam_frame_sig.connect(self._on_cam_frame)
         self._mute_hotkey_sig.connect(self._toggle_mute)
+        self._mic_mode_sig.connect(self._apply_mic_mode)
         self._cam_stop = threading.Event()
 
         # Camera preview overlay (child of central widget, positioned in resizeEvent)
@@ -2942,6 +2944,17 @@ class MainWindow(QMainWindow):
             QSystemTrayIcon.MessageIcon.Information, 2000,
         )
 
+    def _apply_mic_mode(self, available: bool) -> None:
+        """Atualiza a UI para refletir a disponibilidade do microfone."""
+        if not available:
+            self._mute_btn.setEnabled(False)
+            self._mute_btn.setText("SEM MICROFONE")
+
+    def set_mic_mode(self, available: bool) -> None:
+        if not available:
+            self._log_sig.emit("SYS: 🎤 MODO TEXTO ATIVO — microfone não detectado.")
+        self._mic_mode_sig.emit(available)
+
     def _toggle_mute(self):
         self._muted = not self._muted
         self.hud.muted = self._muted
@@ -3078,6 +3091,9 @@ class JarvisUI:
 
     def write_log(self, text: str):
         self._win._log_sig.emit(text)
+
+    def set_mic_mode(self, available: bool) -> None:
+        self._win.set_mic_mode(available)
 
     def wait_for_api_key(self):
         while not self._win._ready:

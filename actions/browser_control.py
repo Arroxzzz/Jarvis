@@ -852,6 +852,7 @@ class _SessionRegistry:
         self._sessions:        dict[str, _BrowserSession] = {}
         self._active_browser:  str                        = ""
         self._lock             = threading.Lock()
+        self._url_lock         = threading.Lock()
         self._last_native_url: str                        = ""
         self._watchdog_started = False
 
@@ -864,12 +865,14 @@ class _SessionRegistry:
             return name in self._sessions
 
     def note_native_url(self, url: str) -> None:
-        self._last_native_url = url
+        with self._url_lock:
+            self._last_native_url = url
 
     def pop_native_url(self) -> str:
         """Son native açılan URL'yi bir kez döndürür (tekrarı önlemek için tüketilir)."""
-        url, self._last_native_url = self._last_native_url, ""
-        return url
+        with self._url_lock:
+            url, self._last_native_url = self._last_native_url, ""
+            return url
 
     def _get_or_create(self, browser_name: str) -> _BrowserSession:
         with self._lock:

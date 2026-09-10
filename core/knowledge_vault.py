@@ -12,7 +12,7 @@ from core.paths import get_base_dir
 KNOWLEDGE_DIR = get_base_dir() / "knowledge"
 KNOWLEDGE_DIR.mkdir(parents=True, exist_ok=True)
 
-_SAFE_NAME = re.compile(r"^[a-zA-Z0-9_\-\s]+$")
+_SAFE_NAME = re.compile(r"^[\w\-\s]+$", re.UNICODE)
 
 
 def _resolve(name: str) -> Path:
