@@ -789,6 +789,15 @@ class JarvisLive:
         async with self._session_lock:
             await self.session.send_tool_response(function_responses=function_responses)
 
+    def _safe_send_content_threadsafe(self, text: str) -> None:
+        """Versão thread-safe de _safe_send_content para uso em run_in_executor."""
+        if not self._loop or not self.session:
+            return
+        asyncio.run_coroutine_threadsafe(
+            self._safe_send_content([{"text": text}], turn_complete=False),
+            self._loop
+        )
+
     def plugin_say(self, instruction: str) -> None:
         """
         Thread-safe speech channel for plugins: lets a plugin ask JARVIS to
@@ -1012,7 +1021,12 @@ class JarvisLive:
                     from core.sync_manager import sync_all
                     r = sync_all()
                     self.ui.write_log(f"SYS: {r}")
-                    self.speak(f"[SYNC_RESULT — fale agora] {r} Informe brevemente em PT-BR.")
+                    self.speak(
+                        f"[SYNC_RESULT — fale agora] Resultado da sincronização: {r} "
+                        f"Se houve conflito, explique que duas versões do mesmo arquivo "
+                        f"foram editadas em dispositivos diferentes e a versão local foi mantida. "
+                        f"Fale tudo isso naturalmente em 2-3 frases, Senhor."
+                    )
                 except Exception as e:
                     self.ui.write_log(f"SYS: ⚠ Falha no sync: {e}")
                 finally:
@@ -1122,6 +1136,14 @@ class JarvisLive:
                         self.ui.write_log(f"SYS: 💻 Código gerado — verifique o arquivo.")
                         if r:
                             self.ui.show_content("CODE", r[:500])
+                            _desc_ctx = args.get("description", "")
+                            _path_ctx = args.get("output_path", "área de trabalho")
+                            self._safe_send_content_threadsafe(
+                                f"[CODE_CONTEXT — não leia em voz alta, use como memória] "
+                                f"Código gerado: '{_desc_ctx}'. "
+                                f"Arquivo salvo em: {_path_ctx}. "
+                                f"Conteúdo:\n{r[:1500]}"
+                            )
                     finally:
                         with self._bg_tasks_lock:
                             self._bg_tasks_pending = max(0, self._bg_tasks_pending - 1)
@@ -1154,6 +1176,10 @@ class JarvisLive:
                             _label = f"{_mode.upper()} — {_query[:38]}" if _query else _mode.upper()
                             self.ui.show_content(_label, r)
                             self.ui.write_log(f"SYS: 🔍 Resultado disponível no painel.")
+                            self._safe_send_content_threadsafe(
+                                f"[SEARCH_CONTEXT — não leia em voz alta, use como memória] "
+                                f"Resultado da pesquisa sobre '{_query}':\n{r[:2000]}"
+                            )
                     finally:
                         with self._bg_tasks_lock:
                             self._bg_tasks_pending = max(0, self._bg_tasks_pending - 1)
@@ -1933,6 +1959,15 @@ class JarvisLive:
                     print("[JARVIS] Connected.")
                     self.ui.set_state("LISTENING")
                     self.ui.write_log("SYS: JARVIS online.")
+                    if not self._boot_greeted:
+                        pass
+                    else:
+                        asyncio.ensure_future(
+                            self._safe_send_content([{"text":
+                                "[SYSTEM_ALERT] Conexão restabelecida. "
+                                "Informe em 1 frase curta que está online novamente."
+                            }])
+                        )
                     _write_config_key(_LIVE_MODEL_CACHE_KEY, _live_model)
                     self._conn_backoff = 3
                     self._coulson_stop.clear()

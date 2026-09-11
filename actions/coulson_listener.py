@@ -105,8 +105,9 @@ async def listen_coulson(speak_fn, write_log_fn, stop_event: asyncio.Event) -> N
 
     write_log_fn("SYS: [Coulson] Escutando notificações em tempo real.")
 
-    backoff = 5
-    last_id = None   # evita reprocessar mensagens em reconexão
+    backoff       = 5
+    seen_ids: set = set()   # persiste entre reconexões, dentro do mesmo processo
+    last_id       = None
 
     while not stop_event.is_set():
         try:
@@ -137,9 +138,13 @@ async def listen_coulson(speak_fn, write_log_fn, stop_event: asyncio.Event) -> N
                         if outer.get("event") != "message":
                             continue
 
-                        # Atualizar last_id para evitar reprocessamento em reconexão
                         msg_id = outer.get("id")
                         if msg_id:
+                            if msg_id in seen_ids:
+                                continue
+                            seen_ids.add(msg_id)
+                            if len(seen_ids) > 100:
+                                seen_ids.pop()
                             last_id = msg_id
 
                         msg_raw = outer.get("message", "").strip()

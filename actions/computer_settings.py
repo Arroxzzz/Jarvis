@@ -584,6 +584,21 @@ ACTION_MAP: dict[str, callable] = {
 
 _DANGEROUS_ACTIONS = {"restart", "shutdown"}
 
+_FAST_RULES = {
+    r"(volume.*(bai|baix|dimin|reduz|menos)|(bai|baix|dimin|reduz|menos).*volume)": ("volume", "down"),
+    r"(volume.*(sobe|aument|mais|max)|(sobe|aument|mais|max).*volume)":              ("volume", "up"),
+    r"(brilho.*(bai|baix|dimin|reduz|menos)|(bai|baix|dimin|reduz|menos).*brilho)": ("brightness", "down"),
+    r"(brilho.*(sobe|aument|mais|max)|(sobe|aument|mais|max).*brilho)":              ("brightness", "up"),
+    r"(muta|silenci|mute)":              ("mute", "toggle"),
+}
+
+def _fast_detect(text: str) -> tuple | None:
+    t = text.lower()
+    for pattern, result in _FAST_RULES.items():
+        if re.search(pattern, t):
+            return result
+    return None
+
 
 
 def _detect_action(description: str) -> dict:
@@ -633,10 +648,14 @@ def computer_settings(
     value       = params.get("value", None)
 
     if not raw_action and description:
-        detected   = _detect_action(description)
-        raw_action = detected.get("action", "")
-        if value is None:
-            value = detected.get("value")
+        fast = _fast_detect(description)
+        if fast:
+            raw_action = "mute" if fast[0] == "mute" else f"{fast[0]}_{fast[1]}"
+        else:
+            detected   = _detect_action(description)
+            raw_action = detected.get("action", "")
+            if value is None:
+                value = detected.get("value")
 
     action = raw_action.lower().strip().replace(" ", "_").replace("-", "_")
 
