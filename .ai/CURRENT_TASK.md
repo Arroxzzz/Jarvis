@@ -1,35 +1,26 @@
-# CURRENT_TASK — PRÓXIMA AÇÃO: P3 (Segurança Crítica)
+# CURRENT_TASK — PRÓXIMAS IMPLEMENTAÇÕES APROVADAS
 
-## Concluído nesta rodada
-- Dashboard remoto removido do código, da UI e das dependências exclusivas.
+## STATUS
+Base 100% consolidada. Auditoria encerrada. Efeito Coulson implementado.
 
-## Contexto
-P0, P1 e P2 validados em campo e consolidados em PROJECT_STATE.md.
-Gemini isolado para voz confirmado. Groq→OpenRouter operacional.
+## PRÓXIMA AÇÃO RECOMENDADA — E-mail IMAP/SMTP
+Menor esforço, maior valor imediato. Zero dependência nova.
+- `actions/email_watcher.py`: IMAP polling + SMTP envio
+- Tool `send_email(to, subject, body)` no main.py
+- Leitura proativa de e-mails VIP (lista em long_term.json)
 
-## Pendência aberta antes de P3 (decisão do Senhor Paulo necessária)
-`file_processor.py::_process_audio::transcribe` ainda usa Gemini —
-único ponto de texto/multimodal fora da regra "Gemini só para voz".
-Decidir: manter exceção documentada, ou migrar para Whisper local
-(zero custo, mas consome CPU — avaliar frente à regra de jogos).
+## FILA APROVADA (ordem de implementação)
+1. E-mail IMAP leitura + SMTP envio
+2. Evolution API — WhatsApp envio por comando de voz
+3. Spotify API — controle de música
+4. Google Calendar — leitura de agenda + proatividade temporal
+5. P7b — Sync pendrive↔PC via Supabase (infra pronta)
+6. Modos de operação (Sentinela/Foco/Estudo/Jogos)
+7. core/persona.py — consolidar identidade
 
-## PRÓXIMA AÇÃO IMEDIATA — Fase P3
-1. `actions/desktop.py::_build_sandbox`: remover `pyautogui` do sandbox
-   de código gerado por IA (hoje é RCE de fato via automação de teclado).
-2. `actions/computer_control.py::user_data`: allowlist de campos
-   permitidos (hoje qualquer chave de `identity` é exfiltrável).
-
-## Depois de P3 — ordem definida
-1. P6 — Memória em Nuvem (Supabase): tabela `memory_entries`,
-   substituir backend de `memory/memory_manager.py` mantendo API pública.
-2. P7 — Modo Portátil (Pen Drive): resolver `Path.home()` espalhado,
-   modo de execução sem rastro no PC anfitrião, dependente de P6 pronto
-   para não perder memória de sessão em caso de perda do pen drive.
-3. P4 — Silero VAD (filtro de áudio local).
-
-## Decisões já fechadas — não reabrir sem novo motivo
-- Ollama (P5): arquivado.
-- Gemini exclusivo para voz: regra permanente do projeto.
-- Groq primário, OpenRouter fallback: cadeia oficial de resiliência de texto.
-- Código-fonte: repositório Git privado remoto é o backup primário.
-- Chaves de API: nunca em repositório, nunca embutidas em pen drive portátil.
+## DECISÕES JÁ FECHADAS (não reabrir)
+- Kokoro TTS: descartado
+- Dashboard web: removido permanentemente
+- Ollama: arquivado
+- Polling para Coulson: substituído por SSE (ntfy.sh)
+- Sync automático contínuo: não fazer

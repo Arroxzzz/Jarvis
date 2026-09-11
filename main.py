@@ -74,6 +74,7 @@ from actions.proactive         import ProactiveEngine
 from actions.background_monitor import (
     add_monitor, remove_monitor, list_monitors, check_all as monitor_check_all,
 )
+from actions.coulson_listener   import listen_coulson
 from actions.web_search        import _news as _fetch_news_sync
 from memory.config_manager     import get_brief_enabled
 from core.plugin_loader        import discover_plugins
@@ -747,8 +748,9 @@ class JarvisLive:
         self._pending_cancel_phrase: str | None = None   # frase de cancelamento adiada até o tool_response sair
         self._last_turn_activity: float = time.monotonic()   # watchdog anti-travamento de mic
         self._watchdog_force_count: int = 0   # disparos consecutivos do watchdog — reset em turno saudável
-        self._bg_tasks_pending: int = 0       # tools rodando em background (code_helper/web_search assíncronos)
-        self._bg_tasks_lock = threading.Lock()
+        self._bg_tasks_pending: int  = 0       # tools rodando em background (code_helper/web_search assíncronos)
+        self._bg_tasks_lock          = threading.Lock()
+        self._coulson_stop          = asyncio.Event()
         self._enhanced_live = True  # affective dialog + proactive audio; auto-disabled if the server rejects them
         self._live_candidates: list[str] = []   # preenchido em _resolve_live_model()
         self._live_idx = 0                      # índice do candidato atual em uso
@@ -902,12 +904,11 @@ class JarvisLive:
             f"Use this to calculate exact times for reminders.\n\n"
         )
 
-        # Identity injection — tratamento fixo em PT-BR, sem fallback turco/inglês
-        _addr = (f"ADDRESS: Sempre trate o usuário como 'Senhor {_user_name}'. "
-                 f"Nunca use 'sir' ou 'efendim'."
-                 if _user_name
-                 else "ADDRESS: Sempre trate o usuário como 'Senhor'. "
-                      "Nunca use 'sir' ou 'efendim'.")
+        # Sempre "Senhor" — nunca adicionar o nome, soa mais natural e menos robótico
+        _addr = (
+            "ADDRESS: Sempre trate o usuário como 'Senhor'. "
+            "Nunca use 'Senhor Paulo', nunca 'sir', nunca 'efendim'."
+        )
         identity_ctx = (
             f"[IDENTITY]\n"
             f"Seu nome é {self._asst_name}. Você foi criado por Senhor Paulo "
@@ -1105,31 +1106,27 @@ class JarvisLive:
 
             elif name == "code_helper":
                 _desc = args.get("description", "") or "o código"
-
+                self.ui.write_log(f"SYS: 💻 Gerando código: {_desc[:60]}")
                 def _bg_code():
                     import concurrent.futures
                     with self._bg_tasks_lock:
                         self._bg_tasks_pending += 1
                     try:
-                        executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
-                        future = executor.submit(
-                            code_helper, parameters=args, player=self.ui, speak=None
-                        )
-                        try:
-                            r = future.result(timeout=120)
-                        except concurrent.futures.TimeoutError:
-                            r = "Tempo limite atingido na geração de código, Senhor."
-                        finally:
-                            executor.shutdown(wait=False, cancel_futures=True)
-                        self.speak(
-                            f"[CODE_RESULT — fale agora] Resultado da geração de código:\n{r}\n\n"
-                            f"Anuncie brevemente que terminou, em português, Senhor."
-                        )
+                        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+                            fut = ex.submit(code_helper, parameters=args,
+                                            player=self.ui, speak=None)
+                            try:
+                                r = fut.result(timeout=120)
+                            except concurrent.futures.TimeoutError:
+                                r = "Tempo limite atingido."
+                        self.ui.write_log(f"SYS: 💻 Código gerado — verifique o arquivo.")
+                        if r:
+                            self.ui.show_content("CODE", r[:500])
                     finally:
                         with self._bg_tasks_lock:
                             self._bg_tasks_pending = max(0, self._bg_tasks_pending - 1)
                 loop.run_in_executor(None, _bg_code)
-                result = f"Criando o código agora, Senhor — {_desc[:60]}. Te aviso quando terminar."
+                result = f"Criando o código agora, Senhor — {_desc[:60]}."
 
             elif name == "dev_agent":
                 _cancel_ev = threading.Event()
@@ -1147,7 +1144,7 @@ class JarvisLive:
             elif name == "web_search":
                 _mode = args.get("mode", "search")
                 _query = args.get("query") or ", ".join(args.get("items", []))
-
+                self.ui.write_log(f"SYS: 🔍 Pesquisando: {_query}")
                 def _bg_search():
                     with self._bg_tasks_lock:
                         self._bg_tasks_pending += 1
@@ -1156,16 +1153,12 @@ class JarvisLive:
                         if r and not r.startswith("No results") and not r.startswith("Search failed"):
                             _label = f"{_mode.upper()} — {_query[:38]}" if _query else _mode.upper()
                             self.ui.show_content(_label, r)
-                        self.speak(
-                            f"[SEARCH_RESULT — fale agora] Resultado da pesquisa sobre "
-                            f"'{_query}':\n{r}\n\nResuma de forma natural e direta em "
-                            f"português, Senhor."
-                        )
+                            self.ui.write_log(f"SYS: 🔍 Resultado disponível no painel.")
                     finally:
                         with self._bg_tasks_lock:
                             self._bg_tasks_pending = max(0, self._bg_tasks_pending - 1)
                 loop.run_in_executor(None, _bg_search)
-                result = f"Pesquisando sobre {_query}, Senhor. Já aviso o resultado." if _query else "Pesquisando, Senhor."
+                result = f"Pesquisando sobre {_query}, Senhor." if _query else "Pesquisando, Senhor."
             elif name == "file_processor":
                 if not args.get("file_path") and self.ui.current_file:
                     args["file_path"] = self.ui.current_file
@@ -1942,6 +1935,7 @@ class JarvisLive:
                     self.ui.write_log("SYS: JARVIS online.")
                     _write_config_key(_LIVE_MODEL_CACHE_KEY, _live_model)
                     self._conn_backoff = 3
+                    self._coulson_stop.clear()
 
                     if not self._boot_greeted:
                         self._boot_greeted = True
@@ -1952,9 +1946,13 @@ class JarvisLive:
                     tg.create_task(self._receive_audio())
                     tg.create_task(self._play_audio())
                     tg.create_task(self._run_system_monitor())
+                    tg.create_task(self._run_background_monitor())
+                    tg.create_task(
+                        listen_coulson(self.speak, self.ui.write_log, self._coulson_stop),
+                        name="coulson"
+                    )
                     if self._mic_available:
                         tg.create_task(self._turn_watchdog(), name="watchdog")
-                    tg.create_task(self._run_background_monitor())
                     tg.create_task(self._run_proactive_mode())
                     # Morning briefing — fires once per process launch (if enabled)
                     if not self._briefing_sent and get_brief_enabled():
@@ -1966,6 +1964,7 @@ class JarvisLive:
             except SystemExit:
                 raise
             except BaseException as e:
+                self._coulson_stop.set()   # para o SSE antes de reconectar
                 # Catches both Exception and BaseExceptionGroup (Python 3.11+
                 # TaskGroup raises BaseExceptionGroup when tasks are cancelled
                 # externally, which `except Exception` would miss, letting the
