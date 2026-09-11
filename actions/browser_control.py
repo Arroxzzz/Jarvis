@@ -42,6 +42,30 @@ def _normalize_url(url: str) -> str:
     return "https://" + url
 
 
+def open_url_on_monitor(url: str, monitor: str = "secondary") -> str:
+    """Abre URL diretamente no monitor especificado via --window-position."""
+    from core.paths import get_monitor_position
+    x, y = get_monitor_position(monitor)
+
+    chrome_paths = [
+        r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+        r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+    ]
+    chrome = next((p for p in chrome_paths if shutil.which(p) or os.path.exists(p)), None)
+
+    if not chrome:
+        webbrowser.open(url)
+        return "Browser padrão aberto (Chrome não encontrado para posicionamento, Senhor)."
+
+    subprocess.Popen([
+        chrome,
+        "--new-window",
+        f"--window-position={x},{y}",
+        url,
+    ])
+    return f"Abrindo no monitor {monitor} na posição ({x},{y}), Senhor."
+
+
 def _user_agent() -> str:
     if _OS == "Windows":
         return (

@@ -399,6 +399,24 @@ TOOL_DECLARATIONS = [
         }
     },
     {
+        "name": "open_on_monitor",
+        "description": (
+            "Abre uma URL ou serviço web diretamente em um monitor específico "
+            "sem sequestrar o mouse ou roubar foco. Use para comandos como "
+            "'abre o Gmail no segundo monitor', 'coloca o YouTube na TV', "
+            "'abre o WhatsApp Web no monitor secundário'."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "url":     {"type": "STRING", "description": "URL completa a abrir"},
+                "monitor": {"type": "STRING", "description": "primary | secondary | tv"},
+                "service": {"type": "STRING", "description": "Nome do serviço (gmail, youtube, whatsapp, etc.) — usado se url não fornecida"}
+            },
+            "required": ["monitor"]
+        }
+    },
+    {
         "name": "file_controller",
         "description": "Manages files and folders: list, create, delete, move, copy, rename, read, write, find, disk usage.",
         "parameters": {
@@ -946,7 +964,7 @@ class JarvisLive:
             speech_config=types.SpeechConfig(
                 voice_config=types.VoiceConfig(
                     prebuilt_voice_config=types.PrebuiltVoiceConfig(
-                        voice_name="Charon"
+                        voice_name="Fenrir"
                     )
                 )
             ),
@@ -1058,6 +1076,25 @@ class JarvisLive:
             elif name == "browser_control":
                 r = await loop.run_in_executor(None, lambda: browser_control(parameters=args, player=self.ui))
                 result = r or "Done."
+
+            elif name == "open_on_monitor":
+                from actions.browser_control import open_url_on_monitor
+                _service_urls = {
+                    "gmail":     "https://mail.google.com",
+                    "youtube":   "https://youtube.com",
+                    "whatsapp":  "https://web.whatsapp.com",
+                    "calendar":  "https://calendar.google.com",
+                    "drive":     "https://drive.google.com",
+                    "notion":    "https://notion.so",
+                    "github":    "https://github.com",
+                }
+                _url = args.get("url") or _service_urls.get(
+                    args.get("service", "").lower(), ""
+                )
+                if not _url:
+                    result = "Qual URL ou serviço deseja abrir, Senhor?"
+                else:
+                    result = open_url_on_monitor(_url, args.get("monitor", "secondary"))
 
             elif name == "file_controller":
                 r = await loop.run_in_executor(None, lambda: file_controller(parameters=args, player=self.ui))

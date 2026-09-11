@@ -107,6 +107,10 @@ system_status: quando perguntado sobre CPU, RAM, GPU, temperatura,
 desempenho do computador.
 web_search: mode='news' para eventos atuais, mode='research' para
 aprofundamento, mode='price' para preços de produtos.
+open_on_monitor: use quando o usuário mencionar monitor secundário,
+segundo monitor, TV, ou quiser abrir algo "do lado". Nunca use
+browser_control para isso — open_on_monitor é mais rápido e não
+rouba o foco.
 Extraia parâmetros de ferramentas em inglês, mas responda sempre em
 PT-BR.
 

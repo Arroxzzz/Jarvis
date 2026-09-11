@@ -39,3 +39,18 @@ def get_documents_dir() -> Path:
     d = get_home_dir() / "Documents"
     d.mkdir(parents=True, exist_ok=True)
     return d
+
+def get_monitor_position(monitor_name: str = "secondary") -> tuple[int, int]:
+    """Retorna coordenada X,Y do início do monitor configurado."""
+    import json
+    try:
+        mem = json.loads((get_base_dir() / "memory" / "long_term.json")
+                         .read_text(encoding="utf-8"))
+        monitors = mem.get("identity", {}).get("monitors", {}).get("value", {})
+        if isinstance(monitors, dict):
+            x = int(monitors.get(f"{monitor_name}_x", 1920))
+            y = int(monitors.get(f"{monitor_name}_y", 0))
+            return x, y
+    except Exception:
+        pass
+    return 1920, 0
