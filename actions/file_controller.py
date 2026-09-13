@@ -1,6 +1,7 @@
 import os
 import shutil
 import platform
+import subprocess
 from pathlib import Path
 from datetime import datetime
 from core.paths import get_home_dir
@@ -479,6 +480,16 @@ def get_file_info(path: str, name: str = "") -> str:
 
     except Exception as e:
         return f"Could not get file info: {e}"
+
+def open_folder(path: str) -> str:
+    """Abre uma pasta no Explorer do Windows via subprocess direto."""
+    resolved = _resolve_path(path)
+    if not _is_safe_path(resolved):
+        return f"Acesso negado: {path}, Senhor."
+    if not resolved.exists() or not resolved.is_dir():
+        return f"Pasta não encontrada: {path}, Senhor."
+    subprocess.Popen(["explorer", str(resolved)])
+    return f"Pasta '{resolved.name}' aberta no Explorer, Senhor."
 
 def file_controller(
     parameters: dict = None,

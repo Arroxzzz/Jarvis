@@ -5,12 +5,19 @@ import math
 import os
 import platform
 import random
+import socket
 import subprocess
 import sys
 import threading
 import time
 from pathlib import Path
 from core.paths import get_home_dir
+
+os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = (
+    "--disable-background-timer-throttling "
+    "--disable-backgrounding-occluded-windows "
+    "--disable-renderer-backgrounding"
+)
 
 import psutil
 
@@ -21,7 +28,7 @@ else:
 
 from PyQt6.QtCore import (
     QEasingCurve, QMimeData, QObject, QPointF, QRectF, QSize, Qt,
-    QTimer, QUrl, pyqtSignal,
+    QTimer, QUrl, pyqtSignal, pyqtSlot,
 )
 from PyQt6.QtGui import (
     QAction, QBrush, QColor, QConicalGradient, QDragEnterEvent, QDropEvent,
@@ -33,6 +40,8 @@ from PyQt6.QtWidgets import (
     QMainWindow, QMenu, QPushButton, QScrollArea, QSizePolicy, QSplitter,
     QStackedWidget, QSystemTrayIcon, QTextEdit, QVBoxLayout, QWidget, QProgressBar,
 )
+from PyQt6.QtWebChannel import QWebChannel
+from PyQt6.QtWebEngineWidgets import QWebEngineView
 
 def _base_dir() -> Path:
     if getattr(sys, "frozen", False):
@@ -181,6 +190,8 @@ class _SysMetrics:
         self.net  = 0.0   
         self.gpu  = -1.0  
         self.tmp  = -1.0  
+        self.disk = 0.0
+        self.ping = -1.0
         self._lock = threading.Lock()
         self._last_net = psutil.net_io_counters()
         self._last_net_t = time.time()
@@ -224,12 +235,26 @@ class _SysMetrics:
 
         tmp = self._get_temp()
 
+        try:
+            disk = psutil.disk_usage(str(get_home_dir())).percent
+        except Exception:
+            disk = 0.0
+
+        try:
+            started = time.perf_counter()
+            with socket.create_connection(("1.1.1.1", 53), timeout=0.2):
+                ping = (time.perf_counter() - started) * 1000
+        except OSError:
+            ping = -1.0
+
         with self._lock:
             self.cpu = cpu
             self.mem = mem
             self.net = net
             self.gpu = gpu
             self.tmp = tmp
+            self.disk = disk
+            self.ping = ping
 
     def _get_gpu(self) -> float:
         # pynvml — subprocess-free, works on all platforms if installed
@@ -300,10 +325,51 @@ class _SysMetrics:
                 "net": self.net,
                 "gpu": self.gpu,
                 "tmp": self.tmp,
+                "disk": self.disk,
+                "ping": self.ping,
             }
 
 
 _metrics = _SysMetrics()
+
+
+class _Backend(QObject):
+    """Ponte JS<->Python exposta como 'backend' no QWebChannel."""
+
+    def __init__(self, main_window):
+        super().__init__()
+        self._win = main_window
+
+    @pyqtSlot(str)
+    def on_text_command(self, text: str):
+        if self._win.on_text_command:
+            threading.Thread(
+                target=self._win.on_text_command, args=(text,), daemon=True
+            ).start()
+
+    @pyqtSlot()
+    def request_interrupt(self):
+        if self._win.on_interrupt:
+            self._win.on_interrupt()
+
+    @pyqtSlot()
+    def request_toggle_mute(self):
+        self._win._toggle_mute()
+
+    @pyqtSlot()
+    def request_file_dialog(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self._win, "Selecionar arquivo", "",
+            "Todos os arquivos (*.*)"
+        )
+        if not path:
+            return
+        self._win._current_file = path
+        filename = Path(path).name
+        safe_name = json.dumps(filename)
+        self._win.webview.page().runJavaScript(
+            f"window.jarvisFileSelected({safe_name});"
+        )
 
 class HudCanvas(QWidget):
     def __init__(self, face_path: str, assistant_name: str = "J.A.R.V.I.S", parent=None):
@@ -1501,6 +1567,7 @@ class MainWindow(QMainWindow):
     _cam_frame_sig  = pyqtSignal(bytes)      # live camera frame → HUD area
     _mute_hotkey_sig = pyqtSignal()          # F4 global (pynput) → toggle mute na main thread
     _mic_mode_sig    = pyqtSignal(bool)
+    _web_log_sig     = pyqtSignal(str)
 
     def __init__(self, face_path: str):
         super().__init__()
@@ -1528,6 +1595,7 @@ class MainWindow(QMainWindow):
 
         self.on_text_command   = None
         self.on_interrupt      = None   # callable: () -> None — stop JARVIS mid-speech
+        self.on_mute_changed   = None
         self.get_plugins       = None   # callable: () -> list[dict], set by JarvisLive
         self._muted            = False
         self._current_file: str | None = None
@@ -1540,81 +1608,16 @@ class MainWindow(QMainWindow):
         root = QVBoxLayout(central)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
-        root.addWidget(self._build_header())
+        self.webview = QWebEngineView()
+        html_path = Path(__file__).resolve().parent / "ui_web" / "index.html"
+        self.webview.setUrl(QUrl.fromLocalFile(str(html_path)))
 
-        body = QHBoxLayout()
-        body.setContentsMargins(0, 0, 0, 0)
-        body.setSpacing(0)
-
-        self._left_panel = self._build_left_panel()
-        body.addWidget(self._left_panel, stretch=0)
-
-        # Center column: HUD + resizable content panel via QSplitter
-        self.hud = HudCanvas(face_path, _display)
-        self.hud.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        self._content_panel = self._build_content_panel()
-
-        # Live camera container — replaces HUD when camera stream is active
-        _cam_cont = QWidget()
-        _cam_cont.setStyleSheet("background: #000308;")
-        _cam_v = QVBoxLayout(_cam_cont)
-        _cam_v.setContentsMargins(0, 0, 0, 0)
-        _cam_v.setSpacing(0)
-        _cam_hdr = QHBoxLayout()
-        _cam_hdr.setContentsMargins(8, 5, 8, 5)
-        _cam_title = QLabel("◈  CAMERA FEED")
-        _cam_title.setFont(QFont("Courier New", 8, QFont.Weight.Bold))
-        _cam_title.setStyleSheet(f"color: {C.PRI}; background: transparent;")
-        _cam_hdr.addWidget(_cam_title)
-        _cam_hdr.addStretch()
-        _cam_x = QPushButton("✕  CLOSE")
-        _cam_x.setFont(QFont("Courier New", 8, QFont.Weight.Bold))
-        _cam_x.setCursor(Qt.CursorShape.PointingHandCursor)
-        _cam_x.setStyleSheet(f"""
-            QPushButton {{
-                color: {C.TEXT_DIM}; background: transparent;
-                border: none; padding: 2px 6px;
-            }}
-            QPushButton:hover {{ color: {C.PRI}; }}
-        """)
-        _cam_x.clicked.connect(self.stop_camera_stream)
-        _cam_hdr.addWidget(_cam_x)
-        _cam_v.addLayout(_cam_hdr)
-        self._cam_live_lbl = QLabel()
-        self._cam_live_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._cam_live_lbl.setStyleSheet("background: transparent;")
-        self._cam_live_lbl.setSizePolicy(
-            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
-        )
-        _cam_v.addWidget(self._cam_live_lbl, stretch=1)
-
-        # Stack: 0 = animated HUD, 1 = live camera
-        self._hud_cam_stack = QStackedWidget()
-        self._hud_cam_stack.addWidget(self.hud)
-        self._hud_cam_stack.addWidget(_cam_cont)
-
-        self._center_split = QSplitter(Qt.Orientation.Vertical)
-        self._center_split.setStyleSheet(f"""
-            QSplitter::handle {{
-                background: {C.BORDER};
-                height: 4px;
-            }}
-            QSplitter::handle:hover {{
-                background: {C.PRI_DIM};
-            }}
-        """)
-        self._center_split.addWidget(self._hud_cam_stack)
-        self._center_split.addWidget(self._content_panel)
-        self._center_split.setStretchFactor(0, 3)
-        self._center_split.setStretchFactor(1, 1)
-        self._center_split.setCollapsible(0, False)
-        body.addWidget(self._center_split, stretch=5)
-
-        self._right_panel = self._build_right_panel()
-        body.addWidget(self._right_panel, stretch=0)
-
-        root.addLayout(body, stretch=1)
-        root.addWidget(self._build_footer())
+        self._backend = _Backend(self)
+        self._channel = QWebChannel()
+        self._channel.registerObject("backend", self._backend)
+        self.webview.page().setWebChannel(self._channel)
+        root.addWidget(self.webview)
+        # Os painéis Qt legados permanecem no código, mas o HTML cobre a janela.
 
         # Quick-access drawer (floating overlay, built after central widget layout is done)
         self._quick_drawer = self._build_quick_drawer()
@@ -1630,10 +1633,11 @@ class MainWindow(QMainWindow):
         # Metrik güncelleme timer'ı
         self._metric_tmr = QTimer(self)
         self._metric_tmr.timeout.connect(self._update_metrics)
-        self._metric_tmr.start(2000)
-        self._update_metrics()
+        self._metric_tmr.start(1500)
+        # Timers duplicados e chamadas síncronas removidas para aguardar o DOM do HTML carregar
 
-        self._log_sig.connect(self._log.append_log)
+        self._log_sig.connect(self._write_log_js)
+        self._web_log_sig.connect(self._write_log_js)
         self._state_sig.connect(self._apply_state)
         self._content_sig.connect(self._show_content)
         self._reconfig_sig.connect(self._show_setup)
@@ -1674,6 +1678,8 @@ class MainWindow(QMainWindow):
 
     # --- Live camera stream in HUD area ------------------------------------
     def _on_cam_stream(self, start: bool) -> None:
+        if not hasattr(self, "_hud_cam_stack"):
+            return
         if start:
             self._hud_cam_stack.setCurrentIndex(1)
         else:
@@ -1681,6 +1687,8 @@ class MainWindow(QMainWindow):
             self._cam_live_lbl.clear()
 
     def _on_cam_frame(self, data: bytes) -> None:
+        if not hasattr(self, "_cam_live_lbl"):
+            return
         px = QPixmap()
         px.loadFromData(data)
         if not px.isNull():
@@ -2076,9 +2084,9 @@ class MainWindow(QMainWindow):
                 )
                 desk.chmod(desk.stat().st_mode | 0o755)
 
-            self._log.append_log("SYS: Desktop shortcut created.")
+            self._log_sig.emit("SYS: Desktop shortcut created.")
         except Exception as e:
-            self._log.append_log(f"ERR: Shortcut failed — {e}")
+            self._log_sig.emit(f"ERR: Shortcut failed — {e}")
 
     def _toggle_fullscreen(self):
         if self.isFullScreen():
@@ -2117,53 +2125,13 @@ class MainWindow(QMainWindow):
 
     def _update_metrics(self):
         snap = _metrics.snapshot()
-
-        # CPU
         cpu = snap["cpu"]
-        self._bar_cpu.set_value(cpu, f"{cpu:.0f}%")
-
-        # MEM
         mem = snap["mem"]
-        self._bar_mem.set_value(mem, f"{mem:.0f}%")
-
-        # NET
-        net = snap["net"]
-        if net < 1.0:
-            net_str = f"{net*1024:.0f}KB/s"
-        else:
-            net_str = f"{net:.1f}MB/s"
-        net_pct = min(100, net * 10)  # 10 MB/s = %100
-        self._bar_net.set_value(net_pct, net_str)
-
-        # GPU
-        gpu = snap["gpu"]
-        if gpu >= 0:
-            self._bar_gpu.set_value(gpu, f"{gpu:.0f}%")
-        else:
-            self._bar_gpu.set_value(0, "N/A")
-
-        # TMP
-        tmp = snap["tmp"]
-        if tmp >= 0:
-            tmp_pct = min(100, (tmp / 100) * 100)
-            self._bar_tmp.set_value(tmp_pct, f"{tmp:.0f}°C")
-        else:
-            self._bar_tmp.set_value(0, "N/A")
-
-        try:
-            boot_t  = psutil.boot_time()
-            elapsed = time.time() - boot_t
-            h = int(elapsed // 3600)
-            m = int((elapsed % 3600) // 60)
-            self._uptime_lbl.setText(f"UP  {h:02d}:{m:02d}")
-        except Exception:
-            self._uptime_lbl.setText("UP  --:--")
-
-        try:
-            proc_count = len(psutil.pids())
-            self._proc_lbl.setText(f"PROC  {proc_count}")
-        except Exception:
-            self._proc_lbl.setText("PROC  --")
+        disk = snap["disk"]
+        ping = snap["ping"]
+        self.webview.page().runJavaScript(
+            f"if(window.jarvisUpdateTelemetry) window.jarvisUpdateTelemetry({cpu}, {mem}, {disk}, {ping});"
+        )
 
 
     def _build_header(self) -> QWidget:
@@ -2232,9 +2200,7 @@ class MainWindow(QMainWindow):
         return w
 
     def _tick_clock(self):
-        self._clock_lbl.setText(time.strftime("%H:%M:%S"))
-        self._date_lbl.setText(time.strftime("%a %d %b %Y"))
-
+        pass
     def _build_left_panel(self) -> QWidget:
         w = QWidget()
         w.setFixedWidth(_LEFT_W)
@@ -2604,18 +2570,7 @@ class MainWindow(QMainWindow):
 
     def _show_content(self, title: str, text: str):
         """Slot — runs on Qt main thread. Updates and shows the content panel."""
-        import time as _time
-        self._content_title_lbl.setText(title.upper()[:48])
-        self._content_ts_lbl.setText(_time.strftime("%H:%M:%S"))
-        self._content_display.setPlainText(text)
-        self._content_display.moveCursor(
-            self._content_display.textCursor().MoveOperation.Start
-        )
-        first_show = not self._content_panel.isVisible()
-        self._content_panel.show()
-        if first_show:
-            total = self._center_split.height()
-            self._center_split.setSizes([max(total - 220, 120), 220])
+        self._write_log_js(f"{title}: {text}")
 
     def _build_footer(self) -> QWidget:
         w = QWidget()
@@ -2639,8 +2594,7 @@ class MainWindow(QMainWindow):
         cat  = _file_category(p)
         icon, _ = _FILE_ICONS.get(cat, _FILE_ICONS["unknown"])
         size = _fmt_size(p.stat().st_size)
-        self._file_hint.setText(f"{icon}  {p.name}  ·  {size}  ·  Tell {self._assistant_name} what to do with it")
-        self._log.append_log(f"FILE: {p.name} ({size}) loaded")
+        self._log_sig.emit(f"FILE: {p.name} ({size}) loaded")
         if self.on_text_command:
             msg = (
                 f"[FILE_UPLOADED] path={path} | name={p.name} | "
@@ -2726,10 +2680,10 @@ class MainWindow(QMainWindow):
                     )
             enabled = not currently_on
             self._update_autostart_btn(enabled)
-            self._log.append_log(
+            self._log_sig.emit(
                 f"SYS: Auto-start {'enabled' if enabled else 'disabled'}.")
         except Exception as e:
-            self._log.append_log(f"ERR: Auto-start failed — {e}")
+            self._log_sig.emit(f"ERR: Auto-start failed — {e}")
 
     def _update_autostart_btn(self, enabled: bool):
         if not hasattr(self, '_autostart_btn'):
@@ -2819,14 +2773,6 @@ class MainWindow(QMainWindow):
         self._assistant_name = name.strip() or "JARVIS"
         display = self._assistant_name.upper()
         self.setWindowTitle(f"{display} — MARK LI")
-        self._title_lbl.setText(display)
-        if display in ("JARVIS", "J.A.R.V.I.S"):
-            self._sub_lbl.setText("Just A Rather Very Intelligent System")
-        else:
-            self._sub_lbl.setText("Personal AI Assistant")
-        self._log._ai_name_lc = self._assistant_name.lower()
-        self.hud._assistant_name = display
-
         color_changed = False
         if ui_color:
             old = current_palette()
@@ -2842,11 +2788,11 @@ class MainWindow(QMainWindow):
             if ui_color:
                 data["ui_color"] = ui_color.strip().lower()
             API_FILE.write_text(json.dumps(data, indent=4), encoding="utf-8")
-            self._log.append_log(f"SYS: Identity updated — {display}")
+            self._log_sig.emit(f"SYS: Identity updated — {display}")
             if color_changed:
-                self._log.append_log(f"SYS: UI colour applied — {ui_color}")
+                self._log_sig.emit(f"SYS: UI colour applied — {ui_color}")
         except Exception as e:
-            self._log.append_log(f"ERR: Config save failed — {e}")
+            self._log_sig.emit(f"ERR: Config save failed — {e}")
 
     def _open_plugin_manager(self):
         plugins = self.get_plugins() if self.get_plugins else []
@@ -2921,13 +2867,15 @@ class MainWindow(QMainWindow):
         self._resume_rendering()
 
     def _pause_rendering(self) -> None:
-        self.hud._tmr.stop()
+        self.webview.setUpdatesEnabled(False)
         self._metric_tmr.stop()
+        self._telemetry_tmr.stop()
         _metrics.pause()
 
     def _resume_rendering(self) -> None:
-        self.hud._tmr.start(16)
-        self._metric_tmr.start(2000)
+        self.webview.setUpdatesEnabled(True)
+        self._metric_tmr.start(1500)
+        self._telemetry_tmr.start(1500)
         _metrics.resume()
 
     def changeEvent(self, event):
@@ -2948,8 +2896,9 @@ class MainWindow(QMainWindow):
     def _apply_mic_mode(self, available: bool) -> None:
         """Atualiza a UI para refletir a disponibilidade do microfone."""
         if not available:
-            self._mute_btn.setEnabled(False)
-            self._mute_btn.setText("SEM MICROFONE")
+            self.webview.page().runJavaScript(
+                "window.jarvisSetMicAvailable(false);"
+            )
 
     def set_mic_mode(self, available: bool) -> None:
         if not available:
@@ -2958,45 +2907,54 @@ class MainWindow(QMainWindow):
 
     def _toggle_mute(self):
         self._muted = not self._muted
-        self.hud.muted = self._muted
-        self._style_mute_btn()
+        self.webview.page().runJavaScript(
+            f"window.jarvisSetMuteState({json.dumps(self._muted)});"
+        )
+        if self.on_mute_changed:
+            self.on_mute_changed(self._muted)
         if self._muted:
             self._apply_state("MUTED")
-            self._log.append_log("SYS: Microphone muted.")
+            self._log_sig.emit("SYS: Microphone muted.")
         else:
             self._apply_state("LISTENING")
-            self._log.append_log("SYS: Microphone active.")
+            self._log_sig.emit("SYS: Microphone active.")
 
     def _style_mute_btn(self):
-        if self._muted:
-            self._mute_btn.setText("🔇  MICROPHONE MUTED")
-            self._mute_btn.setStyleSheet(f"""
-                QPushButton {{
-                    background: #140006; color: {C.MUTED_C};
-                    border: 1px solid {C.MUTED_C}; border-radius: 3px;
-                }}
-            """)
-        else:
-            self._mute_btn.setText("🎙  MICROPHONE ACTIVE")
-            self._mute_btn.setStyleSheet(f"""
-                QPushButton {{
-                    background: #00140a; color: {C.GREEN};
-                    border: 1px solid {C.GREEN}; border-radius: 3px;
-                }}
-                QPushButton:hover {{ background: #001f10; }}
-            """)
+        self.webview.page().runJavaScript(
+            f"window.jarvisSetMuteState({json.dumps(self._muted)});"
+        )
 
     def _send(self):
-        txt = self._input.text().strip()
-        if not txt: return
-        self._input.clear()
-        self._log.append_log(f"You: {txt}")
-        if self.on_text_command:
-            threading.Thread(target=self.on_text_command, args=(txt,), daemon=True).start()
+        pass
 
     def _apply_state(self, state: str):
-        self.hud.state    = state
-        self.hud.speaking = (state == "SPEAKING")
+        safe_state = json.dumps(state)
+        self.webview.page().runJavaScript(f"window.jarvisSetState({safe_state});")
+
+    def _write_log_js(self, text: str):
+        name, _, msg = text.partition(":")
+        name = name.strip() or "SISTEMA"
+        msg = msg.strip() or text
+        safe_name = json.dumps(name)
+        safe_msg = json.dumps(msg)
+        self.webview.page().runJavaScript(
+            f"if(window.jarvisLog) window.jarvisLog({safe_name}, {safe_msg});"
+        )
+
+    def clear_log(self):
+        self.webview.page().runJavaScript(
+            "document.getElementById('logList').innerHTML = '';"
+        )
+
+    def _push_telemetry(self):
+        snap = _metrics.snapshot()
+        cpu = snap["cpu"]
+        mem = snap["mem"]
+        disk = snap["disk"]
+        ping = snap["ping"]
+        self.webview.page().runJavaScript(
+            f"if(window.jarvisUpdateTelemetry) window.jarvisUpdateTelemetry({cpu}, {mem}, {disk}, {ping});"
+        )
 
     def _check_config(self) -> bool:
         if not API_FILE.exists(): return False
@@ -3031,7 +2989,7 @@ class MainWindow(QMainWindow):
             self._overlay = None
         self._apply_state("LISTENING")
         self._assistant_name = _read_full_config().get("assistant_name", "JARVIS") or "JARVIS"
-        self._log.append_log(f"SYS: Initialised. OS={os_name.upper()}. {self._assistant_name} online.")
+        self._log_sig.emit(f"SYS: Initialised. OS={os_name.upper()}. {self._assistant_name} online.")
 
 class _RootShim:
     def __init__(self, app: QApplication):
@@ -3061,7 +3019,7 @@ class JarvisUI:
 
     @property
     def current_file(self) -> str | None:
-        return self._win._drop_zone.current_file()
+        return getattr(self._win, "_current_file", None)
 
     @property
     def on_text_command(self):
@@ -3092,6 +3050,9 @@ class JarvisUI:
 
     def write_log(self, text: str):
         self._win._log_sig.emit(text)
+
+    def clear_log(self):
+        self._win.clear_log()
 
     def set_mic_mode(self, available: bool) -> None:
         self._win.set_mic_mode(available)

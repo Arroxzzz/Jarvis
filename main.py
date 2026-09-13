@@ -435,6 +435,21 @@ TOOL_DECLARATIONS = [
         }
     },
     {
+        "name": "open_folder",
+        "description": (
+            "Abre uma pasta no Explorer do Windows sem roubar foco ou simular "
+            "teclado. Use quando o usuário pedir para 'abrir a pasta X', "
+            "'me mostra a pasta', 'abre no explorer'. NUNCA use open_app para pastas."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "path": {"type": "STRING", "description": "Caminho ou nome da pasta (ex: 'desktop/Python Scripts')"}
+            },
+            "required": ["path"]
+        }
+    },
+    {
         "name": "desktop_control",
         "description": "Controls the desktop: wallpaper, organize, clean, list, stats.",
         "parameters": {
@@ -964,7 +979,7 @@ class JarvisLive:
             speech_config=types.SpeechConfig(
                 voice_config=types.VoiceConfig(
                     prebuilt_voice_config=types.PrebuiltVoiceConfig(
-                        voice_name="Fenrir"
+                        voice_name="Charon"
                     )
                 )
             ),
@@ -1099,6 +1114,12 @@ class JarvisLive:
             elif name == "file_controller":
                 r = await loop.run_in_executor(None, lambda: file_controller(parameters=args, player=self.ui))
                 result = r or "Done."
+
+            elif name == "open_folder":
+                from actions.file_controller import open_folder
+                result = await loop.run_in_executor(
+                    None, lambda: open_folder(args.get("path", ""))
+                )
 
             elif name == "send_message":
                 r = await loop.run_in_executor(None, lambda: send_message(parameters=args, response=None, player=self.ui, session_memory=None))
@@ -1995,7 +2016,12 @@ class JarvisLive:
 
                     print("[JARVIS] Connected.")
                     self.ui.set_state("LISTENING")
-                    self.ui.write_log("SYS: JARVIS online.")
+                    if getattr(self, "_already_announced_online", False):
+                        self.ui.clear_log()
+                        self.ui.write_log("SYS: ⚠️ Sessão reconectada — histórico da UI reiniciado.")
+                    else:
+                        self.ui.write_log("SYS: JARVIS online.")
+                        self._already_announced_online = True
                     if not self._boot_greeted:
                         pass
                     else:

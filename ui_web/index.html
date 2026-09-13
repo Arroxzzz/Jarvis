@@ -1,0 +1,617 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Jarvis Core</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link
+  href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&display=swap"
+  rel="stylesheet"
+/>
+<style>
+  @layer properties;
+  @layer theme, base, components, utilities;
+  @layer theme {
+    :root {
+      --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      --spacing: 0.25rem;
+      --text-xs: 10px; --text-xs--line-height: calc(1 / 0.75);
+      --text-sm: 12px; --text-sm--line-height: calc(1.25 / 0.875);
+      --text-lg: 15px; --text-lg--line-height: calc(1.75 / 1.125);
+      --text-xl: 18px; --text-xl--line-height: calc(1.75 / 1.25);
+      --font-weight-bold: 700;
+      --tracking-widest: 0.1em;
+      --leading-relaxed: 1.625;
+      --radius-sm: 2px;
+      --ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
+      --color-background: #060b12;
+      --color-foreground: #c8e8ff;
+      --color-border: #1a3a52;
+      --color-primary: #00aaff;
+      --color-muted-foreground: #5598bb;
+      --color-panel: #070f18;
+      --font-body: "IBM Plex Mono", monospace;
+    }
+  }
+  @layer base {
+    *, ::after, ::before { box-sizing: border-box; margin: 0; padding: 0; border: 0 solid; }
+    html { line-height: 1.5; -webkit-text-size-adjust: 100%; tab-size: 4; }
+    h1,h2,h3,h4,h5,h6 { font-size: inherit; font-weight: inherit; }
+    a { color: inherit; text-decoration: inherit; }
+    b, strong { font-weight: bolder; }
+    button, input { font: inherit; color: inherit; border-radius: 0; background-color: transparent; }
+    img, svg, video, canvas { display: block; }
+    ::placeholder { color: currentcolor; opacity: 0.5; }
+  }
+  @layer utilities {
+    .absolute{position:absolute;} .relative{position:relative;} .inset-0{inset:0px;}
+    .top-0{top:0px;} .top-4{top:calc(var(--spacing)*4);} .top-16{top:calc(var(--spacing)*16);}
+    .right-0{right:0px;} .right-16{right:calc(var(--spacing)*16);}
+    .bottom-0{bottom:0px;} .bottom-12{bottom:calc(var(--spacing)*12);}
+    .left-0{left:0px;} .left-16{left:calc(var(--spacing)*16);}
+    .mt-1{margin-top:var(--spacing);} .mt-2{margin-top:calc(var(--spacing)*2);} .mt-3{margin-top:calc(var(--spacing)*3);}
+    .mb-1{margin-bottom:var(--spacing);} .mb-2{margin-bottom:calc(var(--spacing)*2);} .mb-3{margin-bottom:calc(var(--spacing)*3);}
+    .flex{display:flex;} .h-1{height:var(--spacing);} .h-px{height:1px;} .w-full{width:100%;}
+    .flex-1{flex:1;} .flex-shrink-0{flex-shrink:0;} .flex-col{flex-direction:column;}
+    .items-center{align-items:center;} .items-end{align-items:flex-end;}
+    .justify-between{justify-content:space-between;} .justify-center{justify-content:center;}
+    .gap-1{gap:var(--spacing);} .gap-2{gap:calc(var(--spacing)*2);} .gap-3{gap:calc(var(--spacing)*3);} .gap-4{gap:calc(var(--spacing)*4);} .gap-px{gap:1px;}
+    :where(.space-y-1 > :not(:last-child)){margin-block-end:var(--spacing);}
+    :where(.space-y-4 > :not(:last-child)){margin-block-end:calc(var(--spacing)*4);}
+    .overflow-hidden{overflow:hidden;}
+    .rounded-full{border-radius:9999px;} .rounded-sm{border-radius:var(--radius-sm);}
+    .border{border-style:solid;border-width:1px;} .border-t{border-top-style:solid;border-top-width:1px;} .border-b{border-bottom-style:solid;border-bottom-width:1px;}
+    .border-border{border-color:var(--color-border);} .border-muted-foreground{border-color:var(--color-muted-foreground);} .border-primary{border-color:var(--color-primary);}
+    .bg-background{background-color:var(--color-background);} .bg-border{background-color:var(--color-border);} .bg-panel{background-color:var(--color-panel);} .bg-primary{background-color:var(--color-primary);}
+    .p-1{padding:var(--spacing);} .p-3{padding:calc(var(--spacing)*3);} .px-4{padding-inline:calc(var(--spacing)*4);} .py-3{padding-block:calc(var(--spacing)*3);}
+    .pt-2{padding-top:calc(var(--spacing)*2);} .pt-5{padding-top:calc(var(--spacing)*5);} .pb-2{padding-bottom:calc(var(--spacing)*2);}
+    .text-right{text-align:right;} .font-body{font-family:var(--font-body);}
+    .text-lg{font-size:var(--text-lg);line-height:var(--text-lg--line-height);}
+    .text-sm{font-size:var(--text-sm);line-height:var(--text-sm--line-height);}
+    .text-xl{font-size:var(--text-xl);line-height:var(--text-xl--line-height);}
+    .text-xs{font-size:var(--text-xs);line-height:var(--text-xs--line-height);}
+    .leading-relaxed{line-height:var(--leading-relaxed);}
+    .font-bold{font-weight:var(--font-weight-bold);}
+    .tracking-widest{letter-spacing:var(--tracking-widest);}
+    .whitespace-pre-line{white-space:pre-line;}
+    .text-foreground{color:var(--color-foreground);} .text-muted-foreground{color:var(--color-muted-foreground);} .text-primary{color:var(--color-primary);}
+    .cursor-pointer{cursor:pointer;}
+  }
+  @keyframes bar-bounce { from{transform:scaleY(0.2);} to{transform:scaleY(1);} }
+  .bar-wave span{ display:inline-block; width:2px; background:#00aaff; margin:0 1px; border-radius:1px; animation: bar-bounce var(--d,0.8s) ease-in-out infinite alternate; }
+  @keyframes status-pulse { 0%, 100% { opacity: 0.72; text-shadow: 0 0 4px rgba(0,170,255,0.2); } 50% { opacity: 1; text-shadow: 0 0 12px rgba(0,170,255,0.9); } }
+  #orbStatus{
+    position:absolute; left:50%; top:calc(50% + 350px); z-index:3;
+    transform:translateX(-50%); white-space:nowrap;
+    color:var(--color-muted-foreground); font-size:10px; letter-spacing:0.1em;
+    transition:color 180ms ease, text-shadow 180ms ease;
+  }
+  #orbStatus.speaking{ color:var(--color-primary); animation:status-pulse 1.2s ease-in-out infinite; }
+  #voiceWidget{
+    position:absolute; left:50%; top:calc(50% + 378px); z-index:3;
+    transform:translateX(-50%);
+  }
+  #signature{
+    position:fixed; right:16px; bottom:12px; z-index:4;
+    color:var(--color-muted-foreground); font-size:10px;
+    letter-spacing:0.08em; opacity:0.78;
+    text-shadow:0 0 6px rgba(0,170,255,0.22);
+    pointer-events:none;
+  }
+  #logList{ scrollbar-width:thin; scrollbar-color:#00aaff55 transparent; }
+  #logList::-webkit-scrollbar{ width:4px; }
+  #logList::-webkit-scrollbar-track{ background:transparent; }
+  #logList::-webkit-scrollbar-thumb{ background:#00aaff66; border-radius:2px; }
+  #logList::-webkit-scrollbar-thumb:hover{ background:#00aaffaa; }
+  #chatInputPanel{ transition:border-color 180ms ease, box-shadow 180ms ease; }
+  #chatInputPanel:focus-within{
+    border-color:#00aaff;
+    box-shadow:0 0 10px rgba(0,170,255,0.28), inset 0 0 8px rgba(0,170,255,0.08);
+  }
+
+  html, body{ width:100%; height:100%; overflow:hidden; }
+  input{ outline:none; }
+  input::placeholder{ color: var(--color-muted-foreground); }
+  #dropInput{ display:none; }
+
+  /* núcleo — SEM border-radius e SEM overflow:hidden: o limite da
+     esfera é calculado dentro do fragment shader, não recortado por CSS. */
+  #orbWrap{
+    position:relative; z-index:2;
+    width:656px; height:656px;
+  }
+  canvas#orb{ display:block; width:100%; height:100%; }
+
+  @media (max-width: 1100px){
+    #telemetryPanel{ left:24px; }
+    #systemPanel{ right:24px; width:315px !important; }
+    #systemPanel > div{ width:315px !important; }
+    #orbStage{ transform:scale(0.78); transform-origin:center; }
+  }
+
+  @media (max-width: 760px){
+    html, body{ overflow:auto; }
+    #hudRoot{ min-height:100vh; overflow:hidden !important; }
+    #telemetryPanel{ top:76px; left:12px; transform:scale(0.78); transform-origin:top left; }
+    #systemPanel{
+      top:auto !important; right:12px; bottom:12px;
+      width:calc(100vw - 24px) !important;
+    }
+    #systemPanel > div{ width:100% !important; }
+    #orbStage{ transform:scale(0.56); transform-origin:center; }
+    #signature{ right:12px; bottom:8px; font-size:9px; }
+  }
+</style>
+<script src="qrc:///qtwebchannel/qwebchannel.js"></script>
+</head>
+<body>
+  <div id="hudRoot" class="relative font-body bg-background" style="width:100vw; height:100vh; overflow:hidden">
+    <div class="absolute inset-0" style="background: radial-gradient(ellipse at 50% 50%, rgba(0,100,200,0.06) 0%, transparent 65%); pointer-events:none;"></div>
+
+    <svg class="absolute top-0 left-0" width="80" height="80" fill="none">
+      <path d="M0 60 L0 0 L60 0" stroke="#00aaff" stroke-width="1" stroke-opacity="0.4"></path>
+    </svg>
+    <svg class="absolute top-0 right-0" width="80" height="80" fill="none">
+      <path d="M80 60 L80 0 L20 0" stroke="#00aaff" stroke-width="1" stroke-opacity="0.4"></path>
+    </svg>
+    <svg class="absolute bottom-0 left-0" width="80" height="80" fill="none">
+      <path d="M0 20 L0 80 L60 80" stroke="#00aaff" stroke-width="1" stroke-opacity="0.4"></path>
+    </svg>
+    <svg class="absolute bottom-0 right-0" width="80" height="80" fill="none">
+      <path d="M80 20 L80 80 L20 80" stroke="#00aaff" stroke-width="1" stroke-opacity="0.4"></path>
+    </svg>
+
+    <div class="absolute top-0 left-0 right-0 flex justify-center">
+      <div style="height:1px; width:400px; background:linear-gradient(90deg, transparent, #00aaff55, transparent);"></div>
+    </div>
+    <div class="absolute bottom-0 left-0 right-0 flex justify-center">
+      <div style="height:1px; width:400px; background:linear-gradient(90deg, transparent, #00aaff55, transparent);"></div>
+    </div>
+
+    <div class="absolute top-0 left-0 right-0 flex flex-col items-center pt-5">
+      <span class="text-foreground tracking-widest text-xl font-bold">J.A.R.V.I.S</span>
+      <span class="text-muted-foreground text-xs tracking-widest mt-1">Apenas o meu Sistema Inteligente</span>
+    </div>
+
+    <div class="absolute top-4 right-16 text-right">
+      <div class="text-primary text-sm tracking-widest" id="clockTime">21:35:25</div>
+      <div class="text-muted-foreground text-xs tracking-widest" id="clockDate">10 ABR 2025</div>
+    </div>
+
+    <!-- ---------- painel esquerdo: telemetria (Stark Industries) ---------- -->
+    <div id="telemetryPanel" class="absolute top-16 left-16">
+      <div class="bg-panel border border-border rounded-sm p-3 font-body" style="width:185px; min-height:220px">
+        <div class="flex items-center gap-2 mb-3 pb-2 border-b border-border">
+          <div class="border border-primary rounded-sm p-1" style="line-height:0">
+            <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+              <polygon points="6,1 11,4 11,8 6,11 1,8 1,4" stroke="#00aaff" stroke-width="1.2" fill="none"></polygon>
+            </svg>
+          </div>
+          <span class="text-xs text-foreground font-bold tracking-widest"></span>
+        </div>
+
+        <div class="flex justify-between text-xs mb-3">
+          <span class="text-muted-foreground">LINK</span><span class="text-primary font-bold" id="connectionStatus">ONLINE</span>
+        </div>
+
+        <div class="mb-2">
+          <div class="flex justify-between text-xs mb-1">
+            <span class="text-muted-foreground">CPU</span><span class="text-foreground" id="valCpu">27%</span>
+          </div>
+          <div class="w-full h-px bg-border"><div class="h-px bg-primary" id="barCpu" style="width:27%; box-shadow:0 0 4px #00aaff"></div></div>
+        </div>
+        <div class="mb-2">
+          <div class="flex justify-between text-xs mb-1">
+            <span class="text-muted-foreground">MEM</span><span class="text-foreground" id="valMem">76%</span>
+          </div>
+          <div class="w-full h-px bg-border"><div class="h-px bg-primary" id="barMem" style="width:76%; box-shadow:0 0 4px #00aaff"></div></div>
+        </div>
+        <div class="mb-2">
+          <div class="flex justify-between text-xs mb-1">
+            <span class="text-muted-foreground">DISK</span><span class="text-foreground" id="valDisk">50.3%</span>
+          </div>
+          <div class="w-full h-px bg-border"><div class="h-px bg-primary" id="barDisk" style="width:50%; box-shadow:0 0 4px #00aaff"></div></div>
+        </div>
+        <div class="mb-2">
+          <div class="flex justify-between text-xs mb-1"><span class="text-muted-foreground">GPU</span><span class="text-foreground">N/A</span></div>
+        </div>
+        <div class="mb-2">
+          <div class="flex justify-between text-xs mb-1"><span class="text-muted-foreground">TMP</span><span class="text-foreground">N/A</span></div>
+        </div>
+
+        <div class="mt-3 pt-2 border-t border-border text-xs text-muted-foreground space-y-1">
+          <div class="flex gap-3"><span>IP</span><span class="text-foreground">19.33</span></div>
+          <div class="flex gap-3"><span>PING</span><span class="text-foreground" id="valPing">270</span></div>
+          <div class="flex gap-3"><span>OS</span><span class="text-foreground">WIN</span></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ---------- centro: núcleo — plasma orgânico ---------- -->
+    <div class="absolute" style="left:50%; top:50%; transform:translate(-50%, -50%)">
+      <div id="orbStage" class="relative flex items-center justify-center" style="width:700px; height:700px">
+        <div class="absolute rounded-full" style="width:700px; height:700px; background: radial-gradient(ellipse at center, rgba(0,170,255,0.08) 0%, rgba(0,170,255,0.03) 45%, transparent 70%);"></div>
+
+        <div id="orbWrap"><canvas id="orb"></canvas></div>
+        <span id="orbStatus">OUVINDO...</span>
+
+        <div class="flex flex-col items-center gap-3 font-body" id="voiceWidget">
+          <div class="flex items-center gap-2">
+            <div class="bar-wave flex items-end gap-px" style="height:28px" id="barsLeft"></div>
+            <div class="relative flex items-center justify-center" style="width:56px; height:56px">
+              <svg width="56" height="56" class="absolute top-0 left-0">
+                <circle id="ringOuter" cx="28" cy="28" r="26" fill="none" stroke="#00aaff" stroke-width="1" stroke-opacity="0.4" stroke-dasharray="3 5"></circle>
+                <circle id="ringInner" cx="28" cy="28" r="20" fill="none" stroke="#00aaff" stroke-width="0.8" stroke-opacity="0.6"></circle>
+              </svg>
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#00aaff" stroke-width="1.5" id="micIcon">
+                <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path>
+                <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path>
+                <line x1="12" y1="19" x2="12" y2="23"></line>
+                <line x1="8" y1="23" x2="16" y2="23"></line>
+              </svg>
+            </div>
+            <div class="bar-wave flex items-end gap-px" style="height:28px" id="barsRight"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ---------- painel direito: chat / log + input + upload ---------- -->
+    <div id="systemPanel" class="absolute right-16 flex flex-col gap-4" style="top:90px; bottom:90px; width:345px">
+      <div class="bg-panel border border-border rounded-sm font-body flex flex-col flex-1" style="width:345px; min-height:0;">
+        <div class="flex items-center justify-between px-4 py-3 border-b border-border">
+          <span class="text-sm text-foreground tracking-widest font-bold">CHAT / SYSTEM LOG</span>
+          <span class="text-muted-foreground text-lg cursor-pointer" id="logCloseBtn">×</span>
+        </div>
+        <div class="px-4 py-3 space-y-4 flex-1" id="logList" style="overflow-y:auto; min-height:0;">
+          <!-- Logs entram aqui -->
+        </div>
+      </div>
+
+      <div id="chatInputPanel" class="bg-panel border border-border rounded-sm px-4 py-3 flex items-center gap-3 font-body" style="width:345px">
+        <span class="text-primary text-sm">&gt;</span>
+        <input id="chatInput" type="text" class="flex-1 text-xs text-foreground" style="background:transparent; border:none;" placeholder="Digite um comando ou faça uma pergunta..." autocomplete="off" />
+        <button class="text-primary cursor-pointer" type="button" id="sendBtn" aria-label="Enviar">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4">
+            <path d="M14.536 21.686a.5.5 0 0 0 .937-.024l6.5-19a.496.496 0 0 0-.635-.635l-19 6.5a.5.5 0 0 0-.024.937l7.93 3.18a2 2 0 0 1 1.112 1.11zm7.318-19.539l-10.94 10.939"></path>
+          </svg>
+        </button>
+      </div>
+
+      <div class="bg-panel border border-border rounded-sm px-4 py-3 font-body cursor-pointer" style="width:345px" id="uploadPanel">
+        <div class="flex items-center gap-3 mb-2">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.18" style="color:var(--color-foreground)">
+            <path d="M12 13v8m-8-6.101A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.5 8.242"></path>
+            <path d="m8 17l4-4l4 4"></path>
+          </svg>
+          <div>
+            <p class="text-sm text-foreground font-bold">UPLOAD DE ARQUIVOS</p>
+            <p class="text-xs text-muted-foreground">Arraste e solte ou clique para enviar</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="absolute bottom-12 right-16 flex flex-col gap-2" style="width:200px">
+      <button id="btnInterrupt" class="bg-panel border border-border rounded-sm py-2 text-xs tracking-widest font-bold cursor-pointer" style="color:#ff4466; border-color:#ff4466;">
+        ⏸ INTERRUPT [ESC]
+      </button>
+      <button id="btnMute" class="bg-panel border border-border rounded-sm py-2 text-xs tracking-widest font-bold cursor-pointer" style="color:#00ff88; border-color:#00aa55;">
+        🎙 MICROPHONE ACTIVE
+      </button>
+    </div>
+
+    <span id="signature">By: Paulo Mendes</span>
+
+  </div>
+
+<script>
+/* ======================================================================
+   PONTE PYTHON <-> JS (QWebChannel)
+   ====================================================================== */
+let pyBackend = null;
+
+new QWebChannel(qt.webChannelTransport, function (channel) {
+  pyBackend = channel.objects.backend;
+});
+
+function setState(state) {
+  currentState = state;
+  const map = { SPEAKING: 1, THINKING: 0.5, LISTENING: 0, MUTED: 0, SLEEPING: 0 };
+  targetIntensity = map[state] ?? 0;
+  const labels = {
+    SPEAKING: "RESPONDENDO...", THINKING: "PROCESSANDO...",
+    LISTENING: "OUVINDO...", MUTED: "MUDO", SLEEPING: "INATIVO"
+  };
+  orbStatusEl.textContent = labels[state] ?? "OUVINDO...";
+  orbStatusEl.classList.toggle("speaking", state === "SPEAKING");
+}
+window.jarvisSetState = setState;
+window.jarvisLog = appendLog;
+
+window.jarvisUpdateTelemetry = function(cpu, mem, disk, ping) {
+  document.getElementById("barCpu").style.width = cpu.toFixed(0) + "%";
+  document.getElementById("valCpu").textContent = cpu.toFixed(0) + "%";
+  document.getElementById("barMem").style.width = mem.toFixed(0) + "%";
+  document.getElementById("valMem").textContent = mem.toFixed(0) + "%";
+  document.getElementById("barDisk").style.width = disk.toFixed(0) + "%";
+  document.getElementById("valDisk").textContent = disk.toFixed(1) + "%";
+  document.getElementById("valPing").textContent = ping.toFixed(0);
+};
+
+/* ======================================================================
+   JARVIS CORE — plasma orgânico (Shader WebGL)
+   ====================================================================== */
+const canvas = document.getElementById("orb");
+const orbStatusEl = document.getElementById("orbStatus");
+const STAGE_SIZE = 656;
+const DPR = Math.min(window.devicePixelRatio || 1, 2);
+canvas.width = STAGE_SIZE * DPR;
+canvas.height = STAGE_SIZE * DPR;
+
+const gl = canvas.getContext("webgl", { alpha: true, premultipliedAlpha: false });
+
+const vertexSrc = `
+  attribute vec2 aPos;
+  void main() { gl_Position = vec4(aPos, 0.0, 1.0); }
+`;
+
+const fragmentSrc = `
+  precision highp float;
+  uniform vec2 uResolution;
+  uniform float uTime;
+  uniform float uIntensity;
+  uniform float uAudioLevel;
+
+  vec2 hash(vec2 p) {
+    p = vec2(dot(p, vec2(127.1, 311.7)), dot(p, vec2(269.5, 183.3)));
+    return -1.0 + 2.0 * fract(sin(p) * 43758.5453123);
+  }
+  float noise(vec2 p) {
+    const float K1 = 0.366025404;
+    const float K2 = 0.211324865;
+    vec2 i = floor(p + (p.x + p.y) * K1);
+    vec2 a = p - i + (i.x + i.y) * K2;
+    vec2 o = (a.x > a.y) ? vec2(1.0, 0.0) : vec2(0.0, 1.0);
+    vec2 b = a - o + K2;
+    vec2 c = a - 1.0 + 2.0 * K2;
+    vec3 h = max(0.5 - vec3(dot(a, a), dot(b, b), dot(c, c)), 0.0);
+    vec3 n = h * h * h * h * vec3(dot(a, hash(i)), dot(b, hash(i + o)), dot(c, hash(i + 1.0)));
+    return dot(n, vec3(70.0));
+  }
+  float fbm(vec2 p) {
+    float f = 0.0; float amp = 0.55;
+    for (int i = 0; i < 3; i++) { f += amp * noise(p); p *= 1.9; amp *= 0.5; }
+    return f;
+  }
+
+  void main() {
+    vec2 uv = (gl_FragCoord.xy / uResolution.xy) * 2.0 - 1.0;
+    uv.x *= uResolution.x / uResolution.y;
+
+    float t = uTime * (0.06 + uIntensity * 0.05);
+    float warpAmp = 0.68 + uIntensity * 0.7 + uAudioLevel * uIntensity * 0.3;
+
+    vec2 scaled = uv * 1.55;
+    vec2 q = vec2(fbm(scaled + vec2(0.0, 0.0) + t), fbm(scaled + vec2(5.2, 1.3) + t));
+    vec2 r = vec2(fbm(scaled + warpAmp * q + vec2(1.7, 9.2) + t * 1.3), fbm(scaled + warpAmp * q + vec2(8.3, 2.8) + t * 1.1));
+    float f = fbm(scaled + warpAmp * r);
+
+    float grad = (uv.y * 0.5 + 0.5) + (r.x * 0.28 + f * 0.12);
+
+    vec3 cPaleCyan = vec3(0.80, 0.97, 1.00);
+    vec3 cCyan     = vec3(0.20, 0.80, 0.98);
+    vec3 cBlue     = vec3(0.06, 0.48, 0.92);
+    vec3 cDeep     = vec3(0.02, 0.20, 0.55);
+
+    vec3 color = mix(cPaleCyan, cCyan, smoothstep(0.05, 0.20, grad));
+    color = mix(color, cBlue, smoothstep(0.22, 0.40, grad));
+    color = mix(color, cDeep, smoothstep(0.38, 0.62, grad));
+
+    float shimmer = smoothstep(0.55, 1.0, f + 0.5);
+    color = mix(color, vec3(0.85, 0.99, 1.0), shimmer * 0.22);
+    color += vec3(0.03, 0.10, 0.16) * uAudioLevel * uIntensity * 0.4;
+
+    float d = length(uv);
+    float angle = atan(uv.y, uv.x);
+    vec2 edgeSeed = vec2(cos(angle), sin(angle)) * 2.6 + t * 1.4;
+    float edgeNoise = fbm(edgeSeed) * 0.5 + fbm(edgeSeed * 2.1 + 4.0) * 0.25;
+
+    float baseRadius = 0.62;
+    float growth = uIntensity * (0.05 + uAudioLevel * 0.14);
+    float instability = uIntensity * (0.05 + uAudioLevel * 0.22);
+    float radius = baseRadius + growth + edgeNoise * instability;
+
+    float edgeSoftness = 0.05 + uIntensity * uAudioLevel * 0.03;
+    float alpha = 1.0 - smoothstep(radius - edgeSoftness, radius + edgeSoftness, d);
+
+    float leak = smoothstep(radius + edgeSoftness, radius + edgeSoftness + 0.12, d);
+    leak = (1.0 - leak) * smoothstep(radius - edgeSoftness, radius, d);
+    color += cCyan * leak * uIntensity * uAudioLevel * 0.5;
+
+    gl_FragColor = vec4(color * alpha, alpha);
+  }
+`;
+
+function compile(type, src) {
+  const shader = gl.createShader(type);
+  gl.shaderSource(shader, src);
+  gl.compileShader(shader);
+  return shader;
+}
+
+const program = gl.createProgram();
+gl.attachShader(program, compile(gl.VERTEX_SHADER, vertexSrc));
+gl.attachShader(program, compile(gl.FRAGMENT_SHADER, fragmentSrc));
+gl.linkProgram(program);
+gl.useProgram(program);
+
+const quad = new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]);
+const buffer = gl.createBuffer();
+gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+gl.bufferData(gl.ARRAY_BUFFER, quad, gl.STATIC_DRAW);
+
+const aPos = gl.getAttribLocation(program, "aPos");
+gl.enableVertexAttribArray(aPos);
+gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0);
+
+const uResolution = gl.getUniformLocation(program, "uResolution");
+const uTime = gl.getUniformLocation(program, "uTime");
+const uIntensity = gl.getUniformLocation(program, "uIntensity");
+const uAudioLevel = gl.getUniformLocation(program, "uAudioLevel");
+
+gl.viewport(0, 0, canvas.width, canvas.height);
+gl.uniform2f(uResolution, canvas.width, canvas.height);
+gl.enable(gl.BLEND);
+gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+
+let currentState = "idle";
+let targetIntensity = 0;
+let smoothIntensity = 0;
+
+function computeMockAudioLevel(t, speaking) {
+  if (!speaking) return 0.12 + Math.sin(t * 0.6) * 0.06;
+  const envelope = 0.55 + 0.45 * Math.sin(t * 1.3 + Math.sin(t * 0.37) * 2.1);
+  const jitterA = (Math.sin(t * 17.3) * 0.5 + 0.5) * 0.28;
+  const jitterB = (Math.sin(t * 29.7 + 1.7) * 0.5 + 0.5) * 0.18;
+  return Math.min(1.0, envelope * 0.62 + jitterA + jitterB);
+}
+
+let lastTime = performance.now();
+let elapsed = 0;
+
+function frame(now) {
+  requestAnimationFrame(frame);
+  const delta = Math.min((now - lastTime) / 1000, 0.05);
+  lastTime = now;
+  elapsed += delta;
+
+  const smoothing = 1 - Math.pow(0.0025, delta);
+  smoothIntensity += (targetIntensity - smoothIntensity) * smoothing;
+  const audioLevel = computeMockAudioLevel(elapsed, currentState === "SPEAKING");
+
+  gl.clearColor(0, 0, 0, 0);
+  gl.clear(gl.COLOR_BUFFER_BIT);
+  gl.uniform1f(uTime, elapsed);
+  gl.uniform1f(uIntensity, smoothIntensity);
+  gl.uniform1f(uAudioLevel, audioLevel);
+  gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+
+  updateVoiceWidget(currentState, audioLevel);
+}
+requestAnimationFrame(frame);
+
+/* ======================================================================
+   UI 2D — relógio, telemetria, voz, chat/log
+   ====================================================================== */
+
+const clockTimeEl = document.getElementById("clockTime");
+const clockDateEl = document.getElementById("clockDate");
+const brasiliaTimeZone = "America/Sao_Paulo";
+function tickClock() {
+  const now = new Date();
+  clockTimeEl.textContent = now.toLocaleTimeString("pt-BR", { hour12: false, timeZone: brasiliaTimeZone });
+  clockDateEl.textContent = now.toLocaleDateString("pt-BR", { day: "2-digit", month: "short", year: "numeric", timeZone: brasiliaTimeZone }).toUpperCase().replace(/\./g, "").replace(/ DE /g, " ");
+}
+tickClock();
+setInterval(tickClock, 1000);
+
+const voiceWidgetEl = document.getElementById("voiceWidget");
+const barsLeftEl = document.getElementById("barsLeft");
+const barsRightEl = document.getElementById("barsRight");
+const ringOuterEl = document.getElementById("ringOuter");
+const ringInnerEl = document.getElementById("ringInner");
+const micIconEl = document.getElementById("micIcon");
+
+function buildBars(container, count, delayStart) {
+  const heights = [4, 8, 14, 10, 18, 12, 20, 14, 16, 10];
+  for (let i = 0; i < count; i++) {
+    const span = document.createElement("span");
+    span.style.height = heights[i % heights.length] + "px";
+    span.style.animationDelay = (delayStart + i * 0.05).toFixed(2) + "s";
+    span.dataset.baseDuration = (0.4 + (i % heights.length) * 0.07).toFixed(2);
+    span.style.setProperty("--d", span.dataset.baseDuration + "s");
+    container.appendChild(span);
+  }
+}
+buildBars(barsLeftEl, 10, 0);
+buildBars(barsRightEl, 10, 0.5);
+
+function updateVoiceWidget(state, audioLevel) {
+  const speaking = state === "SPEAKING";
+  const speedMult = speaking ? 0.45 : 1;
+  [...barsLeftEl.children, ...barsRightEl.children].forEach((span) => {
+    const base = parseFloat(span.dataset.baseDuration);
+    span.style.setProperty("--d", (base * speedMult).toFixed(2) + "s");
+  });
+  const glow = speaking ? 0.5 + audioLevel * 0.5 : 0.3;
+  ringOuterEl.setAttribute("stroke-opacity", glow.toFixed(2));
+  ringInnerEl.setAttribute("stroke-opacity", (glow + 0.15).toFixed(2));
+  micIconEl.style.filter = speaking ? `drop-shadow(0 0 ${(3 + audioLevel * 5).toFixed(1)}px #00d4ff)` : "none";
+}
+
+const logListEl = document.getElementById("logList");
+const chatInputEl = document.getElementById("chatInput");
+const sendBtnEl = document.getElementById("sendBtn");
+const logCloseBtn = document.getElementById("logCloseBtn");
+const panelRight = logListEl.closest("div[style*='max-height']").parentElement;
+
+function timeNow() { return new Date().toLocaleTimeString("pt-BR", { hour12: false }).slice(0, 5); }
+
+function appendLog(name, text) {
+  const row = document.createElement("div");
+  row.className = "flex gap-3";
+  row.innerHTML =
+    '<div class="mt-1 flex-shrink-0"><div class="border border-primary rounded-full flex items-center justify-center" style="width:18px;height:18px"><div class="rounded-full bg-primary" style="width:6px;height:6px"></div></div></div>' +
+    '<div class="flex-1"><div class="flex items-center gap-2 mb-1"><span class="text-xs text-muted-foreground">' + timeNow() + '</span><span class="text-sm text-foreground font-bold"></span></div><p class="text-xs text-muted-foreground leading-relaxed whitespace-pre-line"></p></div>';
+  row.querySelector(".font-bold").textContent = name;
+  row.querySelector("p").textContent = text;
+  logListEl.appendChild(row);
+  logListEl.scrollTop = logListEl.scrollHeight;
+}
+
+function sendCommand() {
+  const value = chatInputEl.value.trim();
+  if (!value || !pyBackend) return;
+  appendLog("VOCÊ", value);
+  chatInputEl.value = "";
+  pyBackend.on_text_command(value);
+}
+sendBtnEl.addEventListener("click", sendCommand);
+chatInputEl.addEventListener("keydown", (e) => { if (e.key === "Enter") sendCommand(); });
+logCloseBtn.addEventListener("click", () => { panelRight.style.display = panelRight.style.display === "none" ? "" : "none"; });
+
+const uploadPanelEl = document.getElementById("uploadPanel");
+uploadPanelEl.addEventListener("click", () => {
+  if (pyBackend) pyBackend.request_file_dialog();
+});
+
+window.jarvisFileSelected = function (filename) {
+  appendLog("UPLOAD", "Arquivo carregado: " + filename);
+};
+
+document.getElementById("btnInterrupt").addEventListener("click", () => {
+  if (pyBackend) pyBackend.request_interrupt();
+});
+
+const btnMuteEl = document.getElementById("btnMute");
+btnMuteEl.addEventListener("click", () => {
+  if (pyBackend) pyBackend.request_toggle_mute();
+});
+
+window.jarvisSetMuteState = function (muted) {
+  btnMuteEl.textContent = muted ? "🔇 MICROPHONE MUTED" : "🎙 MICROPHONE ACTIVE";
+  btnMuteEl.style.color = muted ? "#ff4466" : "#00ff88";
+  btnMuteEl.style.borderColor = muted ? "#ff4466" : "#00aa55";
+};
+
+window.jarvisSetMicAvailable = function (available) {
+  btnMuteEl.disabled = !available;
+  if (!available) btnMuteEl.textContent = "MICROPHONE UNAVAILABLE";
+};
+
+</script>
+</body>
+</html>
