@@ -1634,7 +1634,11 @@ class MainWindow(QMainWindow):
         self._metric_tmr = QTimer(self)
         self._metric_tmr.timeout.connect(self._update_metrics)
         self._metric_tmr.start(1500)
-        # Timers duplicados e chamadas síncronas removidas para aguardar o DOM do HTML carregar
+        self._update_metrics()
+        self._telemetry_tmr = QTimer(self)
+        self._telemetry_tmr.timeout.connect(self._push_telemetry)
+        self._telemetry_tmr.start(1500)
+        self._push_telemetry()
 
         self._log_sig.connect(self._write_log_js)
         self._web_log_sig.connect(self._write_log_js)
@@ -2130,7 +2134,7 @@ class MainWindow(QMainWindow):
         disk = snap["disk"]
         ping = snap["ping"]
         self.webview.page().runJavaScript(
-            f"if(window.jarvisUpdateTelemetry) window.jarvisUpdateTelemetry({cpu}, {mem}, {disk}, {ping});"
+            f"window.jarvisUpdateTelemetry({cpu}, {mem}, {disk}, {ping});"
         )
 
 
@@ -2869,13 +2873,11 @@ class MainWindow(QMainWindow):
     def _pause_rendering(self) -> None:
         self.webview.setUpdatesEnabled(False)
         self._metric_tmr.stop()
-        self._telemetry_tmr.stop()
         _metrics.pause()
 
     def _resume_rendering(self) -> None:
         self.webview.setUpdatesEnabled(True)
         self._metric_tmr.start(1500)
-        self._telemetry_tmr.start(1500)
         _metrics.resume()
 
     def changeEvent(self, event):
@@ -2938,7 +2940,7 @@ class MainWindow(QMainWindow):
         safe_name = json.dumps(name)
         safe_msg = json.dumps(msg)
         self.webview.page().runJavaScript(
-            f"if(window.jarvisLog) window.jarvisLog({safe_name}, {safe_msg});"
+            f"window.jarvisLog({safe_name}, {safe_msg});"
         )
 
     def clear_log(self):
@@ -2953,7 +2955,7 @@ class MainWindow(QMainWindow):
         disk = snap["disk"]
         ping = snap["ping"]
         self.webview.page().runJavaScript(
-            f"if(window.jarvisUpdateTelemetry) window.jarvisUpdateTelemetry({cpu}, {mem}, {disk}, {ping});"
+            f"window.jarvisUpdateTelemetry({cpu}, {mem}, {disk}, {ping});"
         )
 
     def _check_config(self) -> bool:
@@ -3049,6 +3051,7 @@ class JarvisUI:
         self._win._state_sig.emit(state)
 
     def write_log(self, text: str):
+        self._win._web_log_sig.emit(text)
         self._win._log_sig.emit(text)
 
     def clear_log(self):

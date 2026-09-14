@@ -128,6 +128,7 @@
     #telemetryPanel{ left:24px; }
     #systemPanel{ right:24px; width:315px !important; }
     #systemPanel > div{ width:315px !important; }
+    #logList{ height:360px !important; max-height:360px !important; }
     #orbStage{ transform:scale(0.78); transform-origin:center; }
   }
 
@@ -140,6 +141,7 @@
       width:calc(100vw - 24px) !important;
     }
     #systemPanel > div{ width:100% !important; }
+    #logList{ height:190px !important; max-height:190px !important; }
     #orbStage{ transform:scale(0.56); transform-origin:center; }
     #signature{ right:12px; bottom:8px; font-size:9px; }
   }
@@ -259,13 +261,13 @@
     </div>
 
     <!-- ---------- painel direito: chat / log + input + upload ---------- -->
-    <div id="systemPanel" class="absolute right-16 flex flex-col gap-4" style="top:90px; bottom:90px; width:345px">
-      <div class="bg-panel border border-border rounded-sm font-body flex flex-col flex-1" style="width:345px; min-height:0;">
+    <div id="systemPanel" class="absolute right-16 flex flex-col gap-4" style="top:90px; width:345px">
+      <div class="bg-panel border border-border rounded-sm font-body" style="width:345px">
         <div class="flex items-center justify-between px-4 py-3 border-b border-border">
           <span class="text-sm text-foreground tracking-widest font-bold">CHAT / SYSTEM LOG</span>
           <span class="text-muted-foreground text-lg cursor-pointer" id="logCloseBtn">×</span>
         </div>
-        <div class="px-4 py-3 space-y-4 flex-1" id="logList" style="overflow-y:auto; min-height:0;">
+        <div class="px-4 py-3 space-y-4" id="logList" style="height:600px; max-height:600px; overflow-y:auto">
           <!-- Logs entram aqui -->
         </div>
       </div>
