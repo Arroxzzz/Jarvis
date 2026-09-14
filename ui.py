@@ -1560,6 +1560,7 @@ class PluginManagerOverlay(QWidget):
 class MainWindow(QMainWindow):
     _log_sig        = pyqtSignal(str)
     _state_sig      = pyqtSignal(str)
+    _clear_log_sig  = pyqtSignal()
     _content_sig    = pyqtSignal(str, str)   # (title, text) — thread-safe content display
     _reconfig_sig   = pyqtSignal()           # trigger setup overlay from any thread
     _camera_sig     = pyqtSignal(bytes)      # show camera frame preview (small overlay)
@@ -1567,7 +1568,6 @@ class MainWindow(QMainWindow):
     _cam_frame_sig  = pyqtSignal(bytes)      # live camera frame → HUD area
     _mute_hotkey_sig = pyqtSignal()          # F4 global (pynput) → toggle mute na main thread
     _mic_mode_sig    = pyqtSignal(bool)
-    _web_log_sig     = pyqtSignal(str)
 
     def __init__(self, face_path: str):
         super().__init__()
@@ -1641,8 +1641,8 @@ class MainWindow(QMainWindow):
         self._push_telemetry()
 
         self._log_sig.connect(self._write_log_js)
-        self._web_log_sig.connect(self._write_log_js)
         self._state_sig.connect(self._apply_state)
+        self._clear_log_sig.connect(self._do_clear_log)
         self._content_sig.connect(self._show_content)
         self._reconfig_sig.connect(self._show_setup)
         self._camera_sig.connect(self._show_camera_frame)
@@ -2944,6 +2944,9 @@ class MainWindow(QMainWindow):
         )
 
     def clear_log(self):
+        self._clear_log_sig.emit()
+
+    def _do_clear_log(self):
         self.webview.page().runJavaScript(
             "document.getElementById('logList').innerHTML = '';"
         )
@@ -3051,11 +3054,10 @@ class JarvisUI:
         self._win._state_sig.emit(state)
 
     def write_log(self, text: str):
-        self._win._web_log_sig.emit(text)
         self._win._log_sig.emit(text)
 
     def clear_log(self):
-        self._win.clear_log()
+        self._win._clear_log_sig.emit()
 
     def set_mic_mode(self, available: bool) -> None:
         self._win.set_mic_mode(available)
