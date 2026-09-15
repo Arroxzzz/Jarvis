@@ -1,40 +1,48 @@
-# CURRENT_TASK — ESTABILIZAÇÃO PÓS-MIGRAÇÃO DE UI (WebGL)
+# CURRENT_TASK — EVOLUÇÃO CONTROLADA DO JARVIS
 
-## STATUS
-Migração de UI concluída. Threading fix (sinais Qt) resolveu duplicação
-de log e crash em reconexão de rede. 2 bugs residuais identificados,
-aguardando correção. 1 nova diretriz de simplificação de UI pendente.
+## Concluído
 
-## BUGS ABERTOS
-1. Tela branca / travamento ao restaurar da MINIMIZAÇÃO (barra de tarefas).
-   Restaurar da BANDEJA do sistema funciona normalmente — indica que são
-   dois caminhos de código distintos no Qt lidando com estados diferentes
-   de visibilidade da janela. Causa suspeita: gerenciamento de contexto
-   OpenGL do QWebEngineView em janelas minimizadas via barra de tarefas
-   (Windows), possivelmente relacionado a driver AMD (RX 7600).
-   AÇÃO PENDENTE: diferenciar tratamento de changeEvent (minimizar) vs.
-   hide()/tray icon (bandeja) em ui.py — hoje aparentemente só um dos
-   caminhos foi coberto pelo fix anterior.
+- [x] Corrigir tela branca ao restaurar pela barra de tarefas.
+- [x] Remover telemetria do HUD, Python e JavaScript.
+- [x] Validar sinais Qt para comunicação com o WebEngine.
+- [x] Corrigir prontidão de `window.jarvisLog` durante o carregamento.
+- [x] Restaurar reconhecimento do microfone com ajuste de VAD.
+- [x] Separar resultados extensos de pesquisa em painel HTML próprio.
+- [x] Restringir `deep_reasoning` para evitar latência em tarefas simples.
+- [x] Adicionar timeout de 30 segundos para resposta visual presa.
+- [x] Remover diagnósticos temporários após investigação.
 
-2. Fix de 1ª pessoa em "[SYSTEM_ALERT] Conexão restabelecida" e debounce
-   de set_speaking() — diffs entregues, aplicação/validação pendente de
-   confirmação do Senhor Paulo.
+## Diagnóstico atual
 
-## NOVA DIRETRIZ — REMOÇÃO DE TELEMETRIA
-Senhor Paulo decidiu remover PERMANENTEMENTE o painel de telemetria
-(CPU/MEM/DISK/GPU/TMP/UP/PROC/OS) do HUD. Considerado ocupação de espaço
-desnecessária que não agrega ao projeto. NÃO IMPLEMENTADO AINDA — aguarda
-próxima rodada de trabalho, junto com o fix do bug de minimização.
+- O caminho principal já é cloud-first; nenhum LLM local deve ser introduzido.
+- Latência veio de chamadas externas desnecessárias, limites/instabilidade da API
+  Live e ferramentas que aguardam serviços externos.
+- A troca para HTML/WebGL não foi a causa raiz da latência.
+- Falta autenticação forte do proprietário e bloqueio de emergência independente do modelo.
+- Free tiers servem para uso pessoal moderado, mas não oferecem SLA ou latência determinística.
 
-## PRÓXIMA AÇÃO IMEDIATA (ordem sugerida)
-1. Investigar e corrigir bug de tela branca ao restaurar de minimização.
-2. Remover painel de telemetria do index.html + código Python associado
-   (_push_telemetry, jarvisUpdateTelemetry) já que não será mais usado.
-3. Validar fixes de 1ª pessoa e debounce de set_speaking já entregues.
-4. Retomar Problema 4 da rodada anterior (painel dedicado de
-   pesquisas/resultados, separado do log de chat) — planejado, não iniciado.
+## Próxima sequência aprovada
 
-## LEMBRETE IMPORTANTE
-A troca de interface para WebGL foi decisão válida e correta. Os bugs
-encontrados são custo técnico normal de qualquer migração de renderização
-de UI, não erro do Senhor Paulo. Continuar tratando um problema de cada vez.
+1. Implementar autenticação do proprietário sem tocar ainda no pipeline de áudio.
+2. Implementar bloqueio de emergência com prioridade sobre tools e reprodução.
+3. Criar observabilidade de latência por turno, sem dados sensíveis.
+4. Corrigir roteamento determinístico e timeouts das ferramentas restantes.
+5. Fortalecer fallback cloud, quotas e circuit breaker.
+6. Só depois refatorar módulos grandes de `main.py` em fatias testáveis.
+
+## Restrições permanentes
+
+- PT-BR estrito, tratamento "Senhor", primeira pessoa e consciência temporal.
+- Nenhum LLM local; GPU reservada para jogos.
+- Free tiers apenas; não assumir SLA ou disponibilidade ilimitada.
+- Nenhuma chamada direta ao `QWebEngineView` fora da GUI thread.
+- Nenhuma automação de teclado/mouse quando houver API nativa equivalente.
+- Uma mudança por vez, com validação executável antes da próxima.
+- Não reescrever arquivos inteiros durante implementação.
+
+## Critério de aceite da próxima fase
+
+- Usuário não autenticado não consegue executar tools sensíveis.
+- Bloqueio de emergência interrompe áudio, tools e novos comandos.
+- Cada turno possui métricas de latência sem capturar conteúdo privado.
+- Falhas de provider resultam em resposta curta e recuperação, nunca travamento indefinido.

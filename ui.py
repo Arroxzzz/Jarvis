@@ -5,7 +5,6 @@ import math
 import os
 import platform
 import random
-import socket
 import subprocess
 import sys
 import threading
@@ -17,8 +16,6 @@ os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = (
     "--disable-background-timer-throttling "
     "--disable-renderer-backgrounding"
 )
-
-import psutil
 
 if platform.system() == "Windows":
     _WIN_HIDE: dict = {"creationflags": subprocess.CREATE_NO_WINDOW}
@@ -177,159 +174,6 @@ def retheme_all_widgets(old: dict[str, str], new: dict[str, str]) -> None:
 
 def qcol(h: str, a: int = 255) -> QColor:
     c = QColor(h); c.setAlpha(a); return c
-
-
-from core.hw_sensors import get_gpu_usage as _hw_get_gpu, get_cpu_temp as _hw_get_temp
-
-
-class _SysMetrics:
-    def __init__(self):
-        self.cpu  = 0.0
-        self.mem  = 0.0
-        self.net  = 0.0   
-        self.gpu  = -1.0  
-        self.tmp  = -1.0  
-        self.disk = 0.0
-        self.ping = -1.0
-        self._lock = threading.Lock()
-        self._last_net = psutil.net_io_counters()
-        self._last_net_t = time.time()
-        self._running = True
-        self._paused  = False   # Modo Fantasma — pausa polling sem matar a thread
-        t = threading.Thread(target=self._loop, daemon=True)
-        t.start()
-
-    def pause(self):
-        self._paused = True
-
-    def resume(self):
-        self._paused = False
-
-    def _loop(self):
-        while self._running:
-            if not self._paused:
-                try:
-                    self._update()
-                except Exception:
-                    pass
-            time.sleep(1.5)
-
-    def _update(self):
-        cpu = psutil.cpu_percent(interval=None)
-        mem = psutil.virtual_memory().percent
-
-        nc  = psutil.net_io_counters()
-        now = time.time()
-        dt  = now - self._last_net_t
-        if dt > 0:
-            sent = (nc.bytes_sent - self._last_net.bytes_sent) / dt
-            recv = (nc.bytes_recv - self._last_net.bytes_recv) / dt
-            net  = (sent + recv) / (1024 * 1024)
-        else:
-            net = 0.0
-        self._last_net   = nc
-        self._last_net_t = now
-
-        gpu = self._get_gpu()
-
-        tmp = self._get_temp()
-
-        try:
-            disk = psutil.disk_usage(str(get_home_dir())).percent
-        except Exception:
-            disk = 0.0
-
-        try:
-            started = time.perf_counter()
-            with socket.create_connection(("1.1.1.1", 53), timeout=0.2):
-                ping = (time.perf_counter() - started) * 1000
-        except OSError:
-            ping = -1.0
-
-        with self._lock:
-            self.cpu = cpu
-            self.mem = mem
-            self.net = net
-            self.gpu = gpu
-            self.tmp = tmp
-            self.disk = disk
-            self.ping = ping
-
-    def _get_gpu(self) -> float:
-        # pynvml — subprocess-free, works on all platforms if installed
-        try:
-            import pynvml  # type: ignore
-            pynvml.nvmlInit()
-            h = pynvml.nvmlDeviceGetHandleByIndex(0)
-            return float(pynvml.nvmlDeviceGetUtilizationRates(h).gpu)
-        except Exception:
-            pass
-
-        # Windows: nvml.dll via ctypes (delegated to core.hw_sensors)
-        if _OS == "Windows":
-            return _hw_get_gpu()
-
-        # Linux / macOS: libnvidia-ml shared lib via ctypes
-        try:
-            import ctypes
-            _lib = "libnvidia-ml.so.1" if _OS == "Linux" else "libnvidia-ml.dylib"
-
-            class _Util(ctypes.Structure):
-                _fields_ = [("gpu", ctypes.c_uint), ("memory", ctypes.c_uint)]
-
-            nv = ctypes.CDLL(_lib)
-            nv.nvmlInit_v2()
-            dev = ctypes.c_void_p()
-            nv.nvmlDeviceGetHandleByIndex_v2(0, ctypes.byref(dev))
-            u = _Util()
-            nv.nvmlDeviceGetUtilizationRates(dev, ctypes.byref(u))
-            return float(u.gpu)
-        except Exception:
-            pass
-
-        return -1.0   # N/A — zero subprocess on all platforms
-
-    def _get_temp(self) -> float:
-        # psutil — works on Linux; occasionally Windows with driver support
-        try:
-            temps = psutil.sensors_temperatures()
-            for name in ["coretemp", "k10temp", "cpu_thermal", "acpitz",
-                         "cpu-thermal", "zenpower", "it8688"]:
-                if name in temps and temps[name]:
-                    return temps[name][0].current
-            for entries in temps.values():
-                if entries:
-                    return entries[0].current
-        except Exception:
-            pass
-
-        # Windows: wmi module (pure Python COM, zero subprocess)
-        if _OS == "Windows":
-            try:
-                import wmi  # type: ignore
-                w = wmi.WMI(namespace="root/wmi")
-                tz = w.MSAcpi_ThermalZoneTemperature()
-                if tz:
-                    return (tz[0].CurrentTemperature / 10.0) - 273.15
-            except Exception:
-                pass
-
-        return -1.0   # N/A — zero subprocess on all platforms
-
-    def snapshot(self) -> dict:
-        with self._lock:
-            return {
-                "cpu": self.cpu,
-                "mem": self.mem,
-                "net": self.net,
-                "gpu": self.gpu,
-                "tmp": self.tmp,
-                "disk": self.disk,
-                "ping": self.ping,
-            }
-
-
-_metrics = _SysMetrics()
 
 
 class _Backend(QObject):
@@ -1599,6 +1443,8 @@ class MainWindow(QMainWindow):
         self._muted            = False
         self._current_file: str | None = None
         self._customize_overlay: CustomizeOverlay | None = None
+        self._web_ready = False
+        self._pending_logs: list[str] = []
 
         central = QWidget()
         central.setStyleSheet(f"background: {C.BG};")
@@ -1609,6 +1455,7 @@ class MainWindow(QMainWindow):
         root.setSpacing(0)
         self.webview = QWebEngineView()
         html_path = Path(__file__).resolve().parent / "ui_web" / "index.html"
+        self.webview.loadFinished.connect(self._on_web_loaded)
         self.webview.setUrl(QUrl.fromLocalFile(str(html_path)))
 
         self._backend = _Backend(self)
@@ -1628,16 +1475,6 @@ class MainWindow(QMainWindow):
         self._clock_tmr.timeout.connect(self._tick_clock)
         self._clock_tmr.start(1000)
         self._tick_clock()
-
-        # Metrik güncelleme timer'ı
-        self._metric_tmr = QTimer(self)
-        self._metric_tmr.timeout.connect(self._update_metrics)
-        self._metric_tmr.start(1500)
-        self._update_metrics()
-        self._telemetry_tmr = QTimer(self)
-        self._telemetry_tmr.timeout.connect(self._push_telemetry)
-        self._telemetry_tmr.start(1500)
-        self._push_telemetry()
 
         self._log_sig.connect(self._write_log_js)
         self._state_sig.connect(self._apply_state)
@@ -1678,6 +1515,15 @@ class MainWindow(QMainWindow):
             cw.height() - ph - 28,
             pw, ph,
         )
+
+    def _on_web_loaded(self, ok: bool) -> None:
+        if not ok:
+            return
+        self._web_ready = True
+        pending = self._pending_logs
+        self._pending_logs = []
+        for text in pending:
+            self._write_log_js(text)
 
     # --- Live camera stream in HUD area ------------------------------------
     def _on_cam_stream(self, start: bool) -> None:
@@ -2126,17 +1972,6 @@ class MainWindow(QMainWindow):
         if hasattr(self, '_quick_drawer') and self._quick_drawer.isVisible():
             self._position_quick_drawer()
 
-    def _update_metrics(self):
-        snap = _metrics.snapshot()
-        cpu = snap["cpu"]
-        mem = snap["mem"]
-        disk = snap["disk"]
-        ping = snap["ping"]
-        self.webview.page().runJavaScript(
-            f"window.jarvisUpdateTelemetry({cpu}, {mem}, {disk}, {ping});"
-        )
-
-
     def _build_header(self) -> QWidget:
         w = QWidget()
         w.setFixedHeight(54)
@@ -2573,7 +2408,11 @@ class MainWindow(QMainWindow):
 
     def _show_content(self, title: str, text: str):
         """Slot — runs on Qt main thread. Updates and shows the content panel."""
-        self._write_log_js(f"{title}: {text}")
+        safe_title = json.dumps(title)
+        safe_text = json.dumps(text)
+        self.webview.page().runJavaScript(
+            f"window.jarvisShowContent({safe_title}, {safe_text});"
+        )
 
     def _build_footer(self) -> QWidget:
         w = QWidget()
@@ -2871,18 +2710,18 @@ class MainWindow(QMainWindow):
 
     def _pause_rendering(self) -> None:
         self.webview.setUpdatesEnabled(False)
-        self._metric_tmr.stop()
-        _metrics.pause()
 
     def _resume_rendering(self) -> None:
         self.webview.setUpdatesEnabled(True)
-        self._metric_tmr.start(1500)
-        _metrics.resume()
 
     def changeEvent(self, event):
         super().changeEvent(event)
-        if event.type() == event.Type.WindowStateChange and self.isMinimized():
+        if event.type() != event.Type.WindowStateChange:
+            return
+        if self.isMinimized():
             self._pause_rendering()
+        else:
+            QTimer.singleShot(150, self._resume_rendering)
 
     def closeEvent(self, event):
         event.ignore()
@@ -2933,6 +2772,9 @@ class MainWindow(QMainWindow):
         self.webview.page().runJavaScript(f"window.jarvisSetState({safe_state});")
 
     def _write_log_js(self, text: str):
+        if not self._web_ready:
+            self._pending_logs.append(text)
+            return
         name, _, msg = text.partition(":")
         name = name.strip() or "SISTEMA"
         msg = msg.strip() or text
@@ -2948,16 +2790,6 @@ class MainWindow(QMainWindow):
     def _do_clear_log(self):
         self.webview.page().runJavaScript(
             "document.getElementById('logList').innerHTML = '';"
-        )
-
-    def _push_telemetry(self):
-        snap = _metrics.snapshot()
-        cpu = snap["cpu"]
-        mem = snap["mem"]
-        disk = snap["disk"]
-        ping = snap["ping"]
-        self.webview.page().runJavaScript(
-            f"window.jarvisUpdateTelemetry({cpu}, {mem}, {disk}, {ping});"
         )
 
     def _check_config(self) -> bool:

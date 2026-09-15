@@ -1,133 +1,65 @@
-# JARVIS MARK LI — ARQUITETURA OFICIAL
+# JARVIS MARK LI — ARQUITETURA VIGENTE E ALVO
 
-## CAMADAS DO SISTEMA
+## ARQUITETURA VIGENTE
 
-┌─────────────────────────────────────────────────────────────┐
-│  INTERFACE (ui.py — PyQt6)                                  │
-│  HUD + mic + interrupt + text input + log                   │
-└────────────────────┬────────────────────────────────────────┘
-│
-┌────────────────────▼────────────────────────────────────────┐
-│  NÚCLEO (main.py — JarvisLive)                              │
-│  Gemini Live (voz nativa) + asyncio TaskGroup               │
-│  _safe_send_content / _safe_send_tool_response (Ponto 0)    │
-│  _turn_watchdog / _bg_tasks_pending                         │
-└──┬─────────┬──────────┬──────────┬────────────┬────────────┘
-│         │          │          │            │
-┌──▼──┐  ┌───▼───┐  ┌───▼───┐  ┌───▼───┐  ┌────▼────┐
-│TOOLS│  │MEMORY │  │CLOUD  │  │NOTIFY │  │PORTABLE │
-└──┬──┘  └───┬───┘  └───┬───┘  └───┬───┘  └────┬────┘
-│         │          │          │            │
-│    long_term.json  │     ntfy.sh SSE  boot_stage0.py
-│    knowledge/*.md  │     (Coulson)    project.enc
-│                Supabase               AES-GCM
-│                Storage
-│                (sync criptografado)
-│
-├── Groq API (gpt-oss-120b/20b) — código/texto/pesquisa
-└── OpenRouter free (fallback)
+# CAMADAS
+
+- Boot/portabilidade: `_INICIAR_JARVIS.bat`, `boot_stage0.py`, `project.enc`, `core/crypto_vault.py`.
+- Interface: `ui.py` + `ui_web/index.html` com PyQt6, QWebEngineView, WebGL e QWebChannel.
+- Núcleo: `main.py`, `JarvisLive`, Gemini Live, áudio, tools, reconexão e watchdog.
+- Dados: `memory/`, `knowledge/`, `core/sync_manager.py` e Supabase opcional.
+- Extensões: `plugins/` descobertos pelo `core/plugin_loader.py`.
+- Ações: `actions/` para sistema, arquivos, web, comunicação, visão e desenvolvimento.
 
 ## FLUXO DE VOZ
 
-Microfone → PyAudio chunks → Gemini Live (WebSocket)
+`sounddevice.InputStream` -> `out_queue` -> `send_realtime_input()` -> Gemini Live/VAD/transcrição/tool calls -> `receive()` -> `audio_in_queue`/FunctionResponse/sinais Qt -> `RawOutputStream` e HUD.
 
-→ tokens de voz → PyAudio playback
+O modelo Live é descoberto dinamicamente, com fallbacks. O código configura áudio,
+transcrições, VAD, voz Charon, resumption e compressão de contexto.
 
-→ (paralelo) tool calls → actions/*.py
+## UI E THREADING
 
-→ Groq/OpenRouter (texto)
+Qt é a thread principal; `JarvisLive` roda em thread asyncio separada. JavaScript
+usa `_Backend` via QWebChannel para comandos. Logs, estados, conteúdo, câmera e
+reconfiguração usam sinais Qt. Código fora da GUI thread não pode chamar `runJavaScript()` diretamente.
 
-→ resultado → Gemini Live
+## TOOLS E FALLBACKS
 
-## FLUXO DE TEXTO (sem microfone)
+As tools são declaradas em `TOOL_DECLARATIONS` e despachadas por `_execute_tool()`.
+`core/llm_client.py` fornece Groq e OpenRouter com fallback; os defaults históricos
+de Ollama/OpenAI-compatível não devem ser ativados, pois o produto não usa LLM local.
 
-ui.py TextInput → _on_text_command → _safe_send_content
+## LACUNAS DE SEGURANÇA
 
-→ Gemini Live → resposta de voz → playback
+- Prompt e identidade "Paulo" não autenticam o operador.
+- Ações destrutivas precisam de confirmação ou desbloqueio local.
+- Falta um bloqueio de emergência que pare áudio, tools, notificações e comandos pendentes.
+- Segredos cloud devem permanecer fora do frontend e fora de prompts.
 
-## FLUXO COULSON (notificações do celular)
+## ARQUITETURA CLOUD RECOMENDADA
 
-MacroDroid → POST cifrado → ntfy.sh
+- Gemini Live: caminho primário de voz e visão.
+- Groq: texto rápido quando houver quota gratuita disponível.
+- OpenRouter `:free`: fallback; limites atuais documentados incluem caps de RPM/RPD e limites upstream.
+- Supabase Free: Postgres/Auth/Storage/Edge Functions; free tier inclui limites de armazenamento, funções e pausa por inatividade.
+- Cloudflare Workers Free: auth, rate limit, webhook e proxy curto; não transportar o WebSocket de áudio Live pelo Worker.
 
-ntfy.sh → SSE → listen_coulson (asyncio task)
+Fontes oficiais consultadas:
+- https://ai.google.dev/gemini-api/docs/models/gemini
+- https://openrouter.ai/docs/limits
+- https://supabase.com/pricing
+- https://developers.cloudflare.com/workers/platform/limits/
 
-→ decrypt → _format_message → speak_fn
+## PLANO DE EVOLUÇÃO
 
-→ JARVIS fala instantaneamente (<200ms)
+1. Autenticação do proprietário, bloqueio de emergência e allowlist de tools.
+2. Observabilidade de latência por turno sem conteúdo sensível.
+3. Roteamento determinístico, timeouts, cancelamento e circuit breaker.
+4. Buffer adaptativo e fallback de visão textual.
+5. Separação gradual do `main.py` em módulos testáveis.
+6. Testes de Qt, Live, reconexão, visão, segurança e concorrência.
 
-## FLUXO PORTÁTIL (pendrive)
-
-_INICIAR_JARVIS.bat
-
-→ boot_stage0.py (texto puro no pendrive)
-
-→ PBKDF2(senha) → AES-GCM decrypt
-
-→ extrai project.enc → session_dir temporária
-
-→ pythonw.exe main.py (sem console)
-
-→ [sessão ativa]
-
-→ encerra → secure_wipe(session_dir)
-
-## FLUXO DE SYNC
-
-"Jarvis, sincronize" → sync_memory tool
-
-→ sync_manager.sync_all()
-
-→ _resolve_password(cfg)  ← derivada de supabase_service_key
-
-→ por arquivo: hash local vs hash remoto (sync_state.json)
-
-→ só transfere arquivos modificados
-
-→ upload: encrypt_bytes → Supabase Storage PUT
-
-→ download: Supabase GET → decrypt_bytes → write local
-
-## RESILIÊNCIA DE TEXTO (Groq → OpenRouter)
-
-resilient_text_call(prompt, task_type)
-
-→ GROQ_MODELS[task_type] (gpt-oss-120b, gpt-oss-20b)
-
-→ [falha] → FREE_MODELS[task_type] (openrouter/free)
-
-→ [falha total] → mensagem de erro ao usuário
-
-## ARQUIVOS CRÍTICOS
-
-| Arquivo | Responsabilidade |
-|---|---|
-| `main.py` | Orquestração, Gemini Live, tool dispatch |
-| `core/prompt.txt` | Personalidade, regras, identidade |
-| `core/llm_client.py` | Resiliência Groq→OpenRouter |
-| `core/crypto_vault.py` | AES-GCM+PBKDF2, encrypt/decrypt |
-| `core/sync_manager.py` | Sync Supabase por arquivo |
-| `core/knowledge_vault.py` | Notas Markdown locais |
-| `core/paths.py` | Paths portáteis (get_home_dir) |
-| `actions/coulson_listener.py` | ntfy.sh SSE, Efeito Coulson |
-| `boot_stage0.py` | Boot portátil, decrypt, wipe |
-| `memory/long_term.json` | Memória estruturada (identity/prefs) |
-| `knowledge/*.md` | Notas de conhecimento |
-| `config/api_keys.json` | Chaves (local only, nunca em nuvem) |
-
-## SEGURANÇA
-
-- `api_keys.json`: local only, `.gitignore`, nunca em nuvem
-- Pendrive: AES-256-GCM + PBKDF2 200k iter, wipe pós-sessão
-- Supabase: blobs cifrados (nuvem cega), RLS no inbox
-- ntfy.sh: payload cifrado (AES-GCM, chave derivada localmente)
-- Dashboard web: **REMOVIDO** (superfície de ataque eliminada)
-- Sandbox desktop.py: sem pyautogui, shutil com allowlist
-
-## MODELOS EM USO
-
-| Uso | Modelo | Provider |
-|---|---|---|
-| Voz ao vivo | gemini-2.5-flash-native-audio-latest | Google (Live API) |
-| Código | openai/gpt-oss-120b | Groq |
-| Geral/pesquisa | openai/gpt-oss-20b + groq/compound-mini | Groq |
-| Fallback total | openrouter/free | OpenRouter |
+Não é tecnicamente possível prometer 100% de eficiência ou latência zero com APIs
+externas gratuitas. O critério mensurável é feedback rápido em condições normais,
+timeouts finitos e nenhuma falha indefinidamente bloqueante.

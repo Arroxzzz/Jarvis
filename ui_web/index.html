@@ -47,10 +47,10 @@
   }
   @layer utilities {
     .absolute{position:absolute;} .relative{position:relative;} .inset-0{inset:0px;}
-    .top-0{top:0px;} .top-4{top:calc(var(--spacing)*4);} .top-16{top:calc(var(--spacing)*16);}
+    .top-0{top:0px;} .top-4{top:calc(var(--spacing)*4);}
     .right-0{right:0px;} .right-16{right:calc(var(--spacing)*16);}
     .bottom-0{bottom:0px;} .bottom-12{bottom:calc(var(--spacing)*12);}
-    .left-0{left:0px;} .left-16{left:calc(var(--spacing)*16);}
+    .left-0{left:0px;}
     .mt-1{margin-top:var(--spacing);} .mt-2{margin-top:calc(var(--spacing)*2);} .mt-3{margin-top:calc(var(--spacing)*3);}
     .mb-1{margin-bottom:var(--spacing);} .mb-2{margin-bottom:calc(var(--spacing)*2);} .mb-3{margin-bottom:calc(var(--spacing)*3);}
     .flex{display:flex;} .h-1{height:var(--spacing);} .h-px{height:1px;} .w-full{width:100%;}
@@ -110,6 +110,18 @@
     border-color:#00aaff;
     box-shadow:0 0 10px rgba(0,170,255,0.28), inset 0 0 8px rgba(0,170,255,0.08);
   }
+  #researchPanel{
+    position:absolute; left:16px; top:90px; z-index:3;
+    width:300px; max-height:calc(100vh - 150px);
+    display:none; flex-direction:column;
+  }
+  #researchBody{
+    overflow-y:auto; min-height:0; white-space:pre-wrap;
+    scrollbar-width:thin; scrollbar-color:#00aaff55 transparent;
+  }
+  #researchBody::-webkit-scrollbar{ width:4px; }
+  #researchBody::-webkit-scrollbar-track{ background:transparent; }
+  #researchBody::-webkit-scrollbar-thumb{ background:#00aaff66; border-radius:2px; }
 
   html, body{ width:100%; height:100%; overflow:hidden; }
   input{ outline:none; }
@@ -125,7 +137,7 @@
   canvas#orb{ display:block; width:100%; height:100%; }
 
   @media (max-width: 1100px){
-    #telemetryPanel{ left:24px; }
+    #researchPanel{ left:12px; width:280px; }
     #systemPanel{ right:24px; width:315px !important; }
     #systemPanel > div{ width:315px !important; }
     #logList{ height:360px !important; max-height:360px !important; }
@@ -135,11 +147,11 @@
   @media (max-width: 760px){
     html, body{ overflow:auto; }
     #hudRoot{ min-height:100vh; overflow:hidden !important; }
-    #telemetryPanel{ top:76px; left:12px; transform:scale(0.78); transform-origin:top left; }
     #systemPanel{
       top:auto !important; right:12px; bottom:12px;
       width:calc(100vw - 24px) !important;
     }
+    #researchPanel{ left:12px; right:12px; top:76px; width:auto; max-height:220px; }
     #systemPanel > div{ width:100% !important; }
     #logList{ height:190px !important; max-height:190px !important; }
     #orbStage{ transform:scale(0.56); transform-origin:center; }
@@ -182,53 +194,12 @@
       <div class="text-muted-foreground text-xs tracking-widest" id="clockDate">10 ABR 2025</div>
     </div>
 
-    <!-- ---------- painel esquerdo: telemetria (Stark Industries) ---------- -->
-    <div id="telemetryPanel" class="absolute top-16 left-16">
-      <div class="bg-panel border border-border rounded-sm p-3 font-body" style="width:185px; min-height:220px">
-        <div class="flex items-center gap-2 mb-3 pb-2 border-b border-border">
-          <div class="border border-primary rounded-sm p-1" style="line-height:0">
-            <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-              <polygon points="6,1 11,4 11,8 6,11 1,8 1,4" stroke="#00aaff" stroke-width="1.2" fill="none"></polygon>
-            </svg>
-          </div>
-          <span class="text-xs text-foreground font-bold tracking-widest"></span>
-        </div>
-
-        <div class="flex justify-between text-xs mb-3">
-          <span class="text-muted-foreground">LINK</span><span class="text-primary font-bold" id="connectionStatus">ONLINE</span>
-        </div>
-
-        <div class="mb-2">
-          <div class="flex justify-between text-xs mb-1">
-            <span class="text-muted-foreground">CPU</span><span class="text-foreground" id="valCpu">27%</span>
-          </div>
-          <div class="w-full h-px bg-border"><div class="h-px bg-primary" id="barCpu" style="width:27%; box-shadow:0 0 4px #00aaff"></div></div>
-        </div>
-        <div class="mb-2">
-          <div class="flex justify-between text-xs mb-1">
-            <span class="text-muted-foreground">MEM</span><span class="text-foreground" id="valMem">76%</span>
-          </div>
-          <div class="w-full h-px bg-border"><div class="h-px bg-primary" id="barMem" style="width:76%; box-shadow:0 0 4px #00aaff"></div></div>
-        </div>
-        <div class="mb-2">
-          <div class="flex justify-between text-xs mb-1">
-            <span class="text-muted-foreground">DISK</span><span class="text-foreground" id="valDisk">50.3%</span>
-          </div>
-          <div class="w-full h-px bg-border"><div class="h-px bg-primary" id="barDisk" style="width:50%; box-shadow:0 0 4px #00aaff"></div></div>
-        </div>
-        <div class="mb-2">
-          <div class="flex justify-between text-xs mb-1"><span class="text-muted-foreground">GPU</span><span class="text-foreground">N/A</span></div>
-        </div>
-        <div class="mb-2">
-          <div class="flex justify-between text-xs mb-1"><span class="text-muted-foreground">TMP</span><span class="text-foreground">N/A</span></div>
-        </div>
-
-        <div class="mt-3 pt-2 border-t border-border text-xs text-muted-foreground space-y-1">
-          <div class="flex gap-3"><span>IP</span><span class="text-foreground">19.33</span></div>
-          <div class="flex gap-3"><span>PING</span><span class="text-foreground" id="valPing">270</span></div>
-          <div class="flex gap-3"><span>OS</span><span class="text-foreground">WIN</span></div>
-        </div>
+    <div id="researchPanel" class="bg-panel border border-border rounded-sm font-body">
+      <div class="flex items-center justify-between px-4 py-3 border-b border-border">
+        <span class="text-sm text-foreground tracking-widest font-bold" id="researchTitle">RESEARCH</span>
+        <span class="text-muted-foreground text-lg cursor-pointer" id="researchCloseBtn">×</span>
       </div>
+      <div class="px-4 py-3 text-xs text-muted-foreground leading-relaxed" id="researchBody"></div>
     </div>
 
     <!-- ---------- centro: núcleo — plasma orgânico ---------- -->
@@ -332,15 +303,10 @@ function setState(state) {
 }
 window.jarvisSetState = setState;
 window.jarvisLog = appendLog;
-
-window.jarvisUpdateTelemetry = function(cpu, mem, disk, ping) {
-  document.getElementById("barCpu").style.width = cpu.toFixed(0) + "%";
-  document.getElementById("valCpu").textContent = cpu.toFixed(0) + "%";
-  document.getElementById("barMem").style.width = mem.toFixed(0) + "%";
-  document.getElementById("valMem").textContent = mem.toFixed(0) + "%";
-  document.getElementById("barDisk").style.width = disk.toFixed(0) + "%";
-  document.getElementById("valDisk").textContent = disk.toFixed(1) + "%";
-  document.getElementById("valPing").textContent = ping.toFixed(0);
+window.jarvisShowContent = function (title, text) {
+  document.getElementById("researchTitle").textContent = title;
+  document.getElementById("researchBody").textContent = text;
+  document.getElementById("researchPanel").style.display = "flex";
 };
 
 /* ======================================================================
@@ -559,6 +525,10 @@ const chatInputEl = document.getElementById("chatInput");
 const sendBtnEl = document.getElementById("sendBtn");
 const logCloseBtn = document.getElementById("logCloseBtn");
 const panelRight = logListEl.closest("div[style*='max-height']").parentElement;
+const researchPanelEl = document.getElementById("researchPanel");
+document.getElementById("researchCloseBtn").addEventListener("click", () => {
+  researchPanelEl.style.display = "none";
+});
 
 function timeNow() { return new Date().toLocaleTimeString("pt-BR", { hour12: false }).slice(0, 5); }
 

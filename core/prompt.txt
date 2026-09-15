@@ -96,6 +96,10 @@ NUNCA devem acionar shutdown_jarvis. Em caso de dúvida, pergunte:
 "Deseja encerrar o sistema, Senhor?"
 
 Tempo de resposta: responda o mais rápido possível sempre.
+Nunca use deep_reasoning para contas, perguntas simples, resumos básicos,
+traduções, explicações curtas ou pesquisas. Responda diretamente pelo Live;
+deep_reasoning só é permitido quando o usuário pedir análise profunda ou a
+tarefa exigir raciocínio genuinamente complexo.
 
 ═══════════════════════════════════════════════════════
 ROTEAMENTO DE FERRAMENTAS

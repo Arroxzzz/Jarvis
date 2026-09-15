@@ -669,10 +669,13 @@ TOOL_DECLARATIONS = [
         "name": "deep_reasoning",
         "description": (
             "Consulta um modelo de raciocínio externo (OpenRouter, gratuito) para "
-            "análises complexas, geração/revisão de código difícil, ou problemas que "
-            "exigem raciocínio estendido além da resposta imediata do Gemini Live. "
-            "Use APENAS quando a tarefa for genuinamente complexa — não use para "
-            "perguntas simples ou que outra tool já resolve. "
+            "análises genuinamente complexas, geração/revisão de código difícil, ou "
+            "problemas que exigem raciocínio estendido além da resposta imediata do "
+            "Gemini Live. PROIBIDO usar para aritmética, conversões, perguntas "
+            "factuais simples, resumos básicos, traduções, explicações curtas, "
+            "pesquisas ou qualquer tarefa que o Gemini Live possa responder "
+            "diretamente. Use APENAS quando o usuário pedir análise profunda ou "
+            "quando a complexidade for inequívoca. "
             "task_type='code' para programação, 'reasoning' para lógica/análise "
             "profunda, 'general' para o restante."
         ),
@@ -762,6 +765,8 @@ class JarvisLive:
         self._pending_vision       = None    # (img_bytes, mime_type, question, angle) to inject after tool response
         self._vision_cam_active    = False   # True if camera was opened for vision → auto-close after response
         self._vision_close_pending = False   # True after vision injected; next turn_complete closes camera
+        self._vision_answer_pending = False  # True while waiting for the model's image answer
+        self._vision_started_at = 0.0
         self._vision_last_time     = 0.0     # monotonic time of last screen_process call (cooldown guard)
         self._vision_busy          = False   # True while a vision capture/inject cycle is in flight
         self._interrupted          = False   # True while draining audio after user interrupt
@@ -968,8 +973,20 @@ class JarvisLive:
 
         cfg = dict(
             response_modalities=["AUDIO"],
+            thinking_config=types.ThinkingConfig(
+                thinking_budget=0,
+                include_thoughts=False,
+            ),
             output_audio_transcription={},
             input_audio_transcription={},
+            realtime_input_config=types.RealtimeInputConfig(
+                automatic_activity_detection=types.AutomaticActivityDetection(
+                    start_of_speech_sensitivity=types.StartSensitivity.START_SENSITIVITY_HIGH,
+                    end_of_speech_sensitivity=types.EndSensitivity.END_SENSITIVITY_HIGH,
+                    prefix_padding_ms=300,
+                    silence_duration_ms=700,
+                ),
+            ),
             system_instruction="\n".join(parts),
             tools=[{"function_declarations": TOOL_DECLARATIONS + self._plugin_registry.get_tool_declarations()}],
             session_resumption=types.SessionResumptionConfig(handle=self._resumption_handle),
@@ -1491,6 +1508,10 @@ class JarvisLive:
                                 self._pending_vision = None
                                 b64 = _b64.b64encode(img_b).decode("ascii")
                                 print(f"[Vision] 📤 {len(img_b):,} bytes (angle={angle}) → main session")
+                                if self._turn_done_event:
+                                    self._turn_done_event.clear()
+                                self._vision_answer_pending = True
+                                self._vision_started_at = time.monotonic()
                                 await self._safe_send_content([
                                     {"inline_data": {"mime_type": mime_t, "data": b64}},
                                     {"text": question},
@@ -1500,17 +1521,20 @@ class JarvisLive:
                                     # Camera: keep busy until JARVIS finishes speaking the answer
                                     self._vision_cam_active    = False
                                     self._vision_close_pending = True
-                                else:
-                                    # Screen-only: no camera to close; release busy flag now
-                                    self._vision_busy = False
                             elif self._vision_close_pending:
                                 # This turn_complete IS the vision answer — close camera + release busy flag
                                 self._vision_close_pending = False
                                 self._vision_busy = False
+                                self._vision_answer_pending = False
+                                self._vision_started_at = 0.0
                                 async def _cam_close():
                                     await asyncio.sleep(2.0)
                                     self.ui.stop_camera_stream()
                                 asyncio.create_task(_cam_close())
+                            elif self._vision_answer_pending:
+                                self._vision_answer_pending = False
+                                self._vision_busy = False
+                                self._vision_started_at = 0.0
 
                     if response.tool_call:
                         calls = response.tool_call.function_calls
@@ -1812,6 +1836,20 @@ class JarvisLive:
             if self._active_tool_tasks or bg_tasks_pending > 0:
                 self._last_turn_activity = time.monotonic()
                 continue
+            if (
+                self._vision_answer_pending
+                and self._vision_started_at
+                and time.monotonic() - self._vision_started_at > 30
+            ):
+                self.ui.write_log(
+                    "SYS: ⚠️ A análise da tela demorou demais; reconectando a sessão."
+                )
+                self._pending_vision = None
+                self._vision_answer_pending = False
+                self._vision_busy = False
+                self._vision_started_at = 0.0
+                self._vision_close_pending = False
+                raise RuntimeError("Watchdog: vision response timeout")
             if self._turn_done_event and not self._turn_done_event.is_set():
                 if time.monotonic() - self._last_turn_activity > 15:
                     self._watchdog_force_count += 1
@@ -2011,6 +2049,8 @@ class JarvisLive:
                     self._pending_vision       = None
                     self._vision_cam_active    = False
                     self._vision_close_pending = False
+                    self._vision_answer_pending = False
+                    self._vision_started_at = 0.0
                     self._vision_busy          = False
                     self._vision_last_time     = 0.0
                     self._interrupted          = False

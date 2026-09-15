@@ -1,21 +1,41 @@
-## ATUALIZAÇÃO (sessão pós-migração UI) — bugs residuais mapeados
+# JARVIS MARK LI — ESTADO ATUAL DO PROJETO
 
-### Confirmado funcionando
-- Threading fix (sinais Qt _log_sig/_state_sig/_clear_log_sig): resolveu
-  duplicação de log e crash em reconexão de rede — validado em campo.
-- Animação SPEAKING/LISTENING da orb: funcionando corretamente após
-  debounce em set_speaking (aguardando confirmação final do Senhor Paulo).
-- Reconexão de sessão: anunciada corretamente ao usuário.
-- Pesquisas longas: não travam mais o sistema (era comportamento normal
-  de latência de API, não bug).
+## Estado validado
 
-### Bug em aberto — comportamento distinto entre minimizar e bandeja
-Restaurar da bandeja do Windows: funciona normalmente.
-Restaurar da minimização pela barra de tarefas: tela branca / travamento.
-Isso indica que o QWebEngineView reage de forma diferente a esses dois
-eventos de visibilidade do Qt — precisa de tratamento explícito separado
-para cada caminho (provavelmente em changeEvent/showEvent de MainWindow).
+- Aplicação desktop Python em produção, com `PyQt6` + `QWebEngineView`.
+- `main.py` mantém `JarvisLive` em thread própria com `asyncio`; a UI Qt fica na thread principal.
+- Gemini Live é o caminho primário de voz, com PCM via `sounddevice`, transcrições e VAD automático.
+- A UI WebGL foi validada: restauração após minimizar corrigida, telemetria removida e painel de pesquisas separado do log.
+- Sinais Qt continuam obrigatórios para chamadas ao `QWebEngineView`.
+- O microfone foi diagnosticado e restaurado; o VAD foi ajustado.
+- `deep_reasoning` foi restringido para não ser usado em contas, perguntas simples, resumos básicos, traduções ou pesquisas.
+- O fluxo de visão possui timeout de 30 segundos e reconexão controlada quando a resposta multimodal não chega.
+- `main.py` e `ui.py` compilam sem erros; testes existentes cobrem criptografia, notas e sync.
 
-### Nova diretriz de produto
-Painel de telemetria (CPU/MEM/DISK/GPU/TMP) será REMOVIDO permanentemente
-do HUD por decisão do Senhor Paulo — não agrega valor percebido ao projeto.
+## Problemas ainda conhecidos
+
+- APIs gratuitas não oferecem latência zero, SLA ou disponibilidade constante.
+- A visão depende da capacidade e disponibilidade do modelo Live; o timeout evita congelamento, mas não torna a análise instantânea.
+- O áudio pode ficar picotado quando a API deixa de entregar chunks.
+- O histórico da UI é limpo após reconexão.
+- Há avisos não fatais de DPI do Qt e AFC do SDK Gemini.
+- Não existe autenticação forte de proprietário. Identidade no prompt não é controle de acesso.
+- Não existe ainda bloqueio de emergência independente da Gemini.
+- `main.py` concentra sessão Live, áudio, tools, visão, reconexão, memória e watchdog.
+
+## Direção do produto
+
+JARVIS deve ser um assistente pessoal de voz externo à máquina, com resposta curta,
+consciência temporal, tratamento "Senhor", primeira pessoa, memória controlada,
+ferramentas seguras e prioridade absoluta para fluidez. A GPU local permanece livre
+para jogos; nenhum LLM local deve ser introduzido.
+
+## Decisão cloud provisória
+
+1. Gemini Live para diálogo de voz e multimodalidade.
+2. Groq para texto rápido quando houver chave e cota.
+3. OpenRouter `:free` apenas como fallback, com limites explícitos.
+4. Supabase Free para memória sincronizada, autenticação opcional e storage cifrado.
+5. Cloudflare Workers Free somente para auth, rate limit, webhook e proxy curto; não para a sessão de áudio Live.
+
+Free tier não significa SLA, disponibilidade contínua ou latência constante.
