@@ -158,6 +158,7 @@ def call_llm_text(
         if system:
             messages.append({"role": "system", "content": system})
         messages.append({"role": "user", "content": prompt})
+        started = time.monotonic()
         try:
             resp = requests.post(
                 f"{url}/chat/completions",
@@ -165,8 +166,16 @@ def call_llm_text(
                 headers=_auth_headers(force_provider), timeout=timeout,
             )
             resp.raise_for_status()
+            print(
+                f"[METRIC] provider_end provider={force_provider or provider} "
+                f"model={m} ms={round((time.monotonic() - started) * 1000)} status=ok"
+            )
             return (resp.json()["choices"][0]["message"].get("content") or "").strip()
         except Exception as e:
+            print(
+                f"[METRIC] provider_end provider={force_provider or provider} "
+                f"model={m} ms={round((time.monotonic() - started) * 1000)} status=error"
+            )
             raise RuntimeError(f"{force_provider or provider} call failed: {e}")
 
     url, default_model = get_llm_settings()

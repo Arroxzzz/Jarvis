@@ -2667,8 +2667,14 @@ class MainWindow(QMainWindow):
         def _on_f4():
             self._mute_hotkey_sig.emit()
 
+        def _on_emergency():
+            self._emergency_stop()
+
         def _run():
-            with _pynput_kb.GlobalHotKeys({'<f4>': _on_f4}) as listener:
+            with _pynput_kb.GlobalHotKeys({
+                '<f4>': _on_f4,
+                '<ctrl>+<shift>+<f12>': _on_emergency,
+            }) as listener:
                 listener.join()
 
         threading.Thread(target=_run, daemon=True, name="GlobalHotkeyF4").start()
@@ -2689,6 +2695,11 @@ class MainWindow(QMainWindow):
         mute_act = QAction("Mutar/Desmutar [F4]", self)
         mute_act.triggered.connect(self._toggle_mute)
         menu.addAction(mute_act)
+
+        menu.addSeparator()
+        emergency_act = QAction("PARADA DE EMERGÊNCIA [Ctrl+Shift+F12]", self)
+        emergency_act.triggered.connect(self._emergency_stop)
+        menu.addAction(emergency_act)
 
         menu.addSeparator()
         quit_act = QAction("Sair", self)
@@ -2758,6 +2769,10 @@ class MainWindow(QMainWindow):
         else:
             self._apply_state("LISTENING")
             self._log_sig.emit("SYS: Microphone active.")
+
+    def _emergency_stop(self):
+        """Hard stop independent of the model, network, and asyncio loop."""
+        os._exit(0)
 
     def _style_mute_btn(self):
         self.webview.page().runJavaScript(
