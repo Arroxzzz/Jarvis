@@ -614,6 +614,12 @@ window.jarvisSetMicAvailable = function (available) {
   if (!available) btnMuteEl.textContent = "MICROPHONE UNAVAILABLE";
 };
 
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) {
+    gl.viewport(0, 0, canvas.width, canvas.height);
+  }
+});
+
 </script>
 </body>
 </html>

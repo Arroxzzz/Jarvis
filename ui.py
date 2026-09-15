@@ -15,7 +15,6 @@ from core.paths import get_home_dir
 
 os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = (
     "--disable-background-timer-throttling "
-    "--disable-backgrounding-occluded-windows "
     "--disable-renderer-backgrounding"
 )
 
