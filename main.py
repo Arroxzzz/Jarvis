@@ -865,6 +865,8 @@ class JarvisLive:
 
     def set_speaking(self, value: bool):
         with self._speaking_lock:
+            if self._is_speaking == value:
+                return
             self._is_speaking = value
         if value:
             self.ui.set_state("SPEAKING")
@@ -2028,7 +2030,8 @@ class JarvisLive:
                         asyncio.ensure_future(
                             self._safe_send_content([{"text":
                                 "[SYSTEM_ALERT] Conexão restabelecida. "
-                                "Informe em 1 frase curta que está online novamente."
+                                "Fale EM PRIMEIRA PESSOA (nunca 'JARVIS está...', sempre 'estou...') "
+                                "informando em 1 frase curta que você está online novamente, Senhor."
                             }])
                         )
                     _write_config_key(_LIVE_MODEL_CACHE_KEY, _live_model)

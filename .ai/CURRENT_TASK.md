@@ -1,39 +1,40 @@
-# CURRENT_TASK — VALIDAÇÃO DOS 3 FIXES PÓS-MIGRAÇÃO UI
+# CURRENT_TASK — ESTABILIZAÇÃO PÓS-MIGRAÇÃO DE UI (WebGL)
 
 ## STATUS
-Migração de UI (WebGL/QWebEngineView) concluída estruturalmente. 3 fixes
-aplicados nesta sessão, aguardando bateria de testes de campo antes de
-prosseguir para novas features.
+Migração de UI concluída. Threading fix (sinais Qt) resolveu duplicação
+de log e crash em reconexão de rede. 2 bugs residuais identificados,
+aguardando correção. 1 nova diretriz de simplificação de UI pendente.
 
-## PRÓXIMA AÇÃO IMEDIATA — Bateria de validação
-1. T1 — Confirmar que reconexão de sessão limpa o log da UI (sem duplicação).
-2. T2 — Confirmar que voz `Charon` não gera mais o erro 1007 de
-   CONTENT_TYPE_AUDIO. Se persistir mesmo com Charon, o problema não é a
-   voz — investigar outra causa (possível relação com affective_dialog).
-3. T3 — Confirmar que `open_folder` abre pastas sem roubar foco/simular
-   teclado, e que `open_app` continua funcionando normalmente para
-   programas.
-4. T4 — Regressão geral: notas, código, sync, apps.
+## BUGS ABERTOS
+1. Tela branca / travamento ao restaurar da MINIMIZAÇÃO (barra de tarefas).
+   Restaurar da BANDEJA do sistema funciona normalmente — indica que são
+   dois caminhos de código distintos no Qt lidando com estados diferentes
+   de visibilidade da janela. Causa suspeita: gerenciamento de contexto
+   OpenGL do QWebEngineView em janelas minimizadas via barra de tarefas
+   (Windows), possivelmente relacionado a driver AMD (RX 7600).
+   AÇÃO PENDENTE: diferenciar tratamento de changeEvent (minimizar) vs.
+   hide()/tray icon (bandeja) em ui.py — hoje aparentemente só um dos
+   caminhos foi coberto pelo fix anterior.
 
-## FILA APROVADA (após validação dos fixes)
-1. Investigar erro de sync Supabase com nomes acentuados.
-2. Resolver responsividade da UI em telas menores (COM cuidado, diff revisado
-   antes de aplicar — não repetir o incidente desta sessão).
-3. E-mail IMAP leitura + SMTP envio
-4. Evolution API — WhatsApp envio por comando de voz
-5. Spotify API — controle de música
-6. Google Calendar — leitura de agenda + proatividade temporal
-7. P7b — Sync pendrive↔PC via Supabase
-8. Modos de operação (Sentinela/Foco/Estudo/Jogos e pensar em alguns eficientes e criativos para o uso do Senhor Paulo)
-9. core/persona.py — consolidar identidade
+2. Fix de 1ª pessoa em "[SYSTEM_ALERT] Conexão restabelecida" e debounce
+   de set_speaking() — diffs entregues, aplicação/validação pendente de
+   confirmação do Senhor Paulo.
 
-## DECISÕES JÁ FECHADAS (não reabrir)
-- Kokoro TTS: descartado
-- Dashboard web: removido permanentemente
-- Ollama: arquivado
-- UI: WebGL/HTML via QWebEngineView é a interface oficial definitiva —
-  widgets Qt antigos desativados, não reativar
-- Câmera ao vivo no HUD: fora de escopo permanente (planejado para quando
-  houver webcam dedicada, como frente de trabalho totalmente separada)
-- FPS do WebGL nunca reduz em segundo plano — decisão explícita do Senhor
-  Paulo, não "otimizar" isso sem pedido novo
+## NOVA DIRETRIZ — REMOÇÃO DE TELEMETRIA
+Senhor Paulo decidiu remover PERMANENTEMENTE o painel de telemetria
+(CPU/MEM/DISK/GPU/TMP/UP/PROC/OS) do HUD. Considerado ocupação de espaço
+desnecessária que não agrega ao projeto. NÃO IMPLEMENTADO AINDA — aguarda
+próxima rodada de trabalho, junto com o fix do bug de minimização.
+
+## PRÓXIMA AÇÃO IMEDIATA (ordem sugerida)
+1. Investigar e corrigir bug de tela branca ao restaurar de minimização.
+2. Remover painel de telemetria do index.html + código Python associado
+   (_push_telemetry, jarvisUpdateTelemetry) já que não será mais usado.
+3. Validar fixes de 1ª pessoa e debounce de set_speaking já entregues.
+4. Retomar Problema 4 da rodada anterior (painel dedicado de
+   pesquisas/resultados, separado do log de chat) — planejado, não iniciado.
+
+## LEMBRETE IMPORTANTE
+A troca de interface para WebGL foi decisão válida e correta. Os bugs
+encontrados são custo técnico normal de qualquer migração de renderização
+de UI, não erro do Senhor Paulo. Continuar tratando um problema de cada vez.
