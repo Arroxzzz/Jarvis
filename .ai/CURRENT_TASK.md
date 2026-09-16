@@ -53,10 +53,10 @@ Depois de estabilizar a orchestrator, a evolução deve seguir esta ordem, sem t
 implementar tudo de uma vez:
 
 9. Memória local Obsidian
-   - Definir diretório do vault, contrato de frontmatter, permissões e formato de
-     citações de origem.
-   - Criar indexação incremental e busca textual antes de qualquer busca semântica.
-   - Validar lembranças por recência, fonte e desambiguação.
+    - Status atual: em andamento. Raiz definida como `D:\MEMORIA_JARVIS`.
+    - Busca recursiva local em Markdown implementada em `core/knowledge_vault.py`.
+    - Leitura real validada com `Memoria_Jarvis/Bem-vindo`; escrita controlada,
+       origem/citações e integração conversacional ainda pendentes.
 
 10. Resolver contextual de arquivos e estado do PC
    - Priorizar Downloads, Desktop, janela ativa, navegador e mídia.

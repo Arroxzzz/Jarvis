@@ -142,6 +142,10 @@ def test_invalid_note_name():
         kv_module.write_note("../../etc/passwd", "exploit")
 
 
+def test_obsidian_vault_is_configured():
+    assert kv_module.OBSIDIAN_VAULT == Path(r"D:\MEMORIA_JARVIS")
+
+
 from core.sync_manager import _obfuscate_key, _resolve_password
 
 

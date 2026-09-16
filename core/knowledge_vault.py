@@ -7,9 +7,9 @@ estruturados (identity/preferences/etc).
 import re
 from pathlib import Path
 
-from core.paths import get_base_dir
+OBSIDIAN_VAULT = Path(r"D:\MEMORIA_JARVIS")
 
-KNOWLEDGE_DIR = get_base_dir() / "knowledge"
+KNOWLEDGE_DIR = OBSIDIAN_VAULT
 KNOWLEDGE_DIR.mkdir(parents=True, exist_ok=True)
 
 _SAFE_NAME = re.compile(r"^[\w\-\s]+$", re.UNICODE)
@@ -39,14 +39,14 @@ def read_note(name: str) -> str:
 
 
 def list_notes() -> list[str]:
-    return sorted(p.stem for p in KNOWLEDGE_DIR.glob("*.md"))
+    return sorted(p.relative_to(KNOWLEDGE_DIR).with_suffix("").as_posix() for p in KNOWLEDGE_DIR.rglob("*.md"))
 
 
 def search_notes(query: str, max_results: int = 5) -> str:
     """Busca textual simples (grep) — sem embeddings, leve e gratuito."""
     query_low = query.lower()
     hits = []
-    for path in KNOWLEDGE_DIR.glob("*.md"):
+    for path in KNOWLEDGE_DIR.rglob("*.md"):
         text = path.read_text(encoding="utf-8", errors="ignore")
         if query_low in text.lower():
             idx = text.lower().find(query_low)

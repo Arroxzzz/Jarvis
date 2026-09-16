@@ -14,6 +14,7 @@
 - Contratos estáticos de tools: `core/tool_declarations.py` concentra os schemas e descrições enviados ao Gemini; não contém implementação, UI, áudio ou conexão.
 - Constantes de runtime: `core/runtime_constants.py` concentra valores puros de timezone, modelos fallback, cache e parâmetros de áudio; não executa lógica de boot.
 - Configuração de runtime: `core/runtime_config.py` concentra leitura da API key, prompt fallback, JSON de configuração e escrita atômica de cache; `main.py` mantém apenas wrappers compatíveis e decide quando chamar essas operações.
+- Memória local: `core/knowledge_vault.py` usa `D:\MEMORIA_JARVIS` como Vault Obsidian e faz busca textual recursiva em Markdown, sem embeddings ou serviço remoto nesta fase.
 
 ## FLUXO DE VOZ
 
@@ -125,7 +126,7 @@ Fontes oficiais consultadas:
 6. Buffer adaptativo e fallback de visão textual.
 7. Separação gradual do `main.py` em módulos testáveis.
 8. Testes de Qt, Live, reconexão, visão, segurança, providers e concorrência.
-9. [NOVA DIREÇÃO] Indexação local do vault Obsidian e recuperação de memória com fonte.
+9. [EM ANDAMENTO] Indexação local do vault Obsidian e recuperação de memória com fonte. Raiz configurada em `D:\MEMORIA_JARVIS`; primeira fatia somente leitura validada.
 10. [NOVA DIREÇÃO] Resolução contextual de arquivos, downloads, janelas e mídia.
 11. [NOVA DIREÇÃO] Monitor de segurança em camadas, com contenção auditável.
 12. [NOVA DIREÇÃO] Gatilhos sonoros locais e modo de baixo consumo.
