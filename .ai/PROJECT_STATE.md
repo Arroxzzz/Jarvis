@@ -16,6 +16,7 @@
 - `core/llm_client.py` mede chamadas remotas Groq/OpenRouter sem registrar conteúdo.
 - Comandos de texto agora iniciam eventos `[METRIC]` próprios; o caminho sem microfone participa do baseline.
 - `main.py` e `ui.py` compilam sem erros; suíte atual: 24 testes passando.
+- `core/llm_client.py` agora registra `Retry-After`/rate-limit, bloqueia provider em circuit breaker e faz fallback Groq→OpenRouter de forma controlada.
 
 ## Problemas ainda conhecidos
 
@@ -30,9 +31,12 @@
 - `main.py` concentra sessão Live, áudio, tools, visão, reconexão, memória e watchdog.
 - Ainda não há baseline real de p50/p95; nenhuma troca de provider, buffer ou timeout foi feita nesta etapa.
 - Métricas atualmente são emitidas no terminal, não persistidas nem agregadas; a coleta real de 30-50 turnos ainda está pendente.
-- Baseline parcial coletado: primeiro áudio recebido/reproduzido em 1,797 s e turno completo em 9,640 s.
-- Tools observadas: `save_memory` 0 ms, `open_folder` 15 ms, `screen_process` 172-203 ms e `open_app` 4,718-4,922 ms.
-- O áudio picotado não pode ser atribuído ao player com esta amostra; a API Live continua sendo a hipótese principal.
+- Baseline atual validado: 6 turnos reais coletados no terminal, com amostra variada (web_search, análise de código, visão e interrupção).
+  - `first_audio_received`: p50 = 2,085 ms, p95 = 2,687 ms, máximo = 2,687 ms (n=6).
+  - `first_audio_played`: p50 = 2,085 ms, p95 = 2,687 ms, máximo = 2,687 ms (n=6).
+  - `turn_complete`: p50 = 8,250 ms, p95 = 13,937 ms, máximo = 13,937 ms (n=6).
+- Tools observadas na amostra: `web_search` 0 ms, `screen_process` 203 ms e `provider_end` com Groq em 735-969 ms; a resposta do áudio principal está em faixa excelente, enquanto o maior custo observado está em turnos com análise de código e interrupção.
+- O canal principal de voz está validado como saudável na amostra atual; casos mais longos continuam sendo o eixo prioritário para observação, mas sem otimização prematura antes da próxima coleta controlada.
 
 ## Direção do produto
 

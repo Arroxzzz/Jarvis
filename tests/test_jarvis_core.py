@@ -5,6 +5,7 @@ Roda com: python -m pytest tests/ -v
 import json
 from pathlib import Path
 import sys
+import time
 
 import pytest
 
@@ -181,3 +182,81 @@ def test_obfuscate_key_hides_filename():
     key = _obfuscate_key("Senha_banco_itau.md")
     assert "Senha" not in key
     assert "itau" not in key
+
+
+@pytest.mark.asyncio
+async def test_run_tool_bound_timeout_message():
+    from main import _run_tool_bound
+
+    result = await _run_tool_bound(lambda: time.sleep(0.2) or "ok", 0.05, "demo")
+    assert "demo excedeu" in result
+    assert "cancelado" in result
+
+
+def test_resilient_text_call_falls_back_after_groq_retry_after(monkeypatch):
+    import core.llm_client as llm_client
+
+    def fake_call_llm_text(prompt, system=None, model=None, timeout=120, force_provider=None):
+        if force_provider == "groq":
+            raise llm_client.ProviderRequestError("groq", "429 Too Many Requests", 429, 7)
+        return "fallback-ok"
+
+    monkeypatch.setattr(llm_client, "call_llm_text", fake_call_llm_text)
+    result = llm_client.resilient_text_call("teste", system="sys", task_type="general", timeout=15)
+    assert result == "fallback-ok"
+
+
+def test_provider_circuit_breaker_tracks_retry_window(monkeypatch):
+    import core.llm_client as llm_client
+
+    llm_client._PROVIDER_STATE.clear()
+    exc = llm_client.ProviderRequestError("openrouter", "429 Too Many Requests", 429, 9)
+    llm_client._register_provider_failure("openrouter", exc)
+
+    assert llm_client._provider_is_open("openrouter") is False
+    assert llm_client._provider_next_retry("openrouter") > 0
+
+
+def test_background_panel_result_is_only_reinjected_once():
+    from main import JarvisLive
+
+    live = object.__new__(JarvisLive)
+    live._panel_context_cache = {}
+
+    first = live._panel_result_already_seen("SEARCH", "resultado ABC")
+    second = live._panel_result_already_seen("SEARCH", "resultado ABC")
+    third = live._panel_result_already_seen("SEARCH", "resultado XYZ")
+
+    assert first is False
+    assert second is True
+    assert third is False
+
+
+def test_audio_queue_snapshot_reports_backlog_and_underrun():
+    import asyncio
+    from main import JarvisLive
+
+    live = object.__new__(JarvisLive)
+    live.audio_in_queue = asyncio.Queue()
+    live.out_queue = asyncio.Queue()
+    live.audio_in_queue.put_nowait(b"a")
+    live.audio_in_queue.put_nowait(b"b")
+    live.out_queue.put_nowait({"data": b"c"})
+
+    data = live._audio_queue_snapshot("play")
+    assert data["in_q"] == 2
+    assert data["out_q"] == 1
+    assert data["underrun"] in (0, 1)
+
+
+def test_file_delete_requires_explicit_confirmation(tmp_path):
+    from actions.file_controller import file_controller
+
+    target = tmp_path / "delete_me.txt"
+    target.write_text("x", encoding="utf-8")
+
+    result = file_controller({"action": "delete", "path": str(tmp_path), "name": "delete_me.txt"})
+    assert "confirm" in result.lower()
+
+    confirm = file_controller({"action": "delete", "path": str(tmp_path), "name": "delete_me.txt", "confirmed": "yes"})
+    assert "delete" in confirm.lower() or "removed" in confirm.lower() or "trash" in confirm.lower()

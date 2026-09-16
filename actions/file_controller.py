@@ -505,6 +505,12 @@ def file_controller(
     if player:
         player.write_log(f"[file] {action} {name or path}")
 
+    destructive_actions = {"delete", "rename", "move", "copy", "write"}
+    if action in destructive_actions and str(params.get("confirmed", "")).lower() not in ("yes", "true", "1", "confirm"):
+        if action == "delete":
+            return f"Deleting '{name or path}' is destructive. Confirm by calling again with confirmed=yes."
+        return f"This action is destructive. Confirm by calling again with confirmed=yes."
+
     try:
         if action == "list":
             return list_files(path)

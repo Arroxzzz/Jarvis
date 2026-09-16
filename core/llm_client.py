@@ -21,6 +21,7 @@ import re
 import subprocess
 import sys
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Generator
 
@@ -176,6 +177,23 @@ def call_llm_text(
                 f"[METRIC] provider_end provider={force_provider or provider} "
                 f"model={m} ms={round((time.monotonic() - started) * 1000)} status=error"
             )
+            status_code = None
+            retry_after = None
+            try:
+                status_code = e.response.status_code
+            except Exception:
+                status_code = None
+            try:
+                retry_after = e.response.headers.get("Retry-After")
+            except Exception:
+                retry_after = None
+            if status_code is not None or retry_after is not None or _is_transient(e):
+                raise ProviderRequestError(
+                    force_provider or provider,
+                    f"{force_provider or provider} call failed: {e}",
+                    status_code=status_code,
+                    retry_after=_parse_retry_after(retry_after),
+                ) from e
             raise RuntimeError(f"{force_provider or provider} call failed: {e}")
 
     url, default_model = get_llm_settings()
@@ -203,6 +221,63 @@ def call_llm_text(
 
 
 _TRANSIENT_ERR = ("503", "UNAVAILABLE", "RESOURCE_EXHAUSTED", "429", "DEADLINE_EXCEEDED")
+_PROVIDER_STATE: dict[str, dict[str, float | str | int]] = {}
+
+
+class ProviderRequestError(RuntimeError):
+    def __init__(self, provider: str, message: str, status_code: int | None = None, retry_after: int | float | None = None):
+        self.provider = provider
+        self.status_code = status_code
+        self.retry_after = retry_after
+        super().__init__(message)
+
+
+def _parse_retry_after(value: str | int | float | None) -> float:
+    if value is None:
+        return 0.0
+    try:
+        return max(0.0, float(value))
+    except (TypeError, ValueError):
+        pass
+    try:
+        dt = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return max(0.0, (dt - datetime.now(timezone.utc)).total_seconds())
+    except ValueError:
+        pass
+    try:
+        dt = datetime.strptime(str(value), "%a, %d %b %Y %H:%M:%S GMT")
+        return max(0.0, (dt.replace(tzinfo=timezone.utc) - datetime.now(timezone.utc)).total_seconds())
+    except ValueError:
+        return 0.0
+
+
+def _register_provider_failure(provider: str, exc: Exception) -> None:
+    retry_after = int(getattr(exc, "retry_after", 0) or 0)
+    if retry_after <= 0 and getattr(exc, "status_code", None) == 429:
+        retry_after = 5
+    state = _PROVIDER_STATE.setdefault(provider, {"blocked_until": 0.0, "failures": 0})
+    if retry_after > 0:
+        state["blocked_until"] = max(float(state.get("blocked_until", 0.0)), time.monotonic() + retry_after)
+    else:
+        state["blocked_until"] = max(float(state.get("blocked_until", 0.0)), time.monotonic() + 2.0)
+    state["failures"] = int(state.get("failures", 0)) + 1
+
+
+def _provider_is_open(provider: str) -> bool:
+    state = _PROVIDER_STATE.get(provider)
+    if not state:
+        return True
+    return float(state.get("blocked_until", 0.0)) <= time.monotonic()
+
+
+def _provider_next_retry(provider: str) -> float:
+    state = _PROVIDER_STATE.get(provider)
+    if not state:
+        return 0.0
+    return max(0.0, float(state.get("blocked_until", 0.0)) - time.monotonic())
+
 
 def _is_transient(exc: Exception) -> bool:
     msg = str(exc)
@@ -215,22 +290,23 @@ def resilient_text_call(prompt: str, system: str | None = None,
     if task_type not in GROQ_MODELS:
         task_type = "general"
 
-    groq_models = GROQ_MODELS.get(task_type, [])
-    if not groq_models:
-        print(f"[LLM] Groq task_type='{task_type}': nenhum modelo configurado — pulando para OpenRouter.")
-    for model in groq_models:
-        try:
-            return call_llm_text(prompt, system=system, model=model,
-                                 timeout=timeout, force_provider="groq")
-        except Exception as e:
-            print(f"[LLM] Groq {model} falhou: {e} — tentando próximo")
+    for provider, models in (("groq", GROQ_MODELS.get(task_type, [])), ("openrouter", FREE_MODELS.get(task_type, FREE_MODELS["general"]))):
+        if not _provider_is_open(provider):
+            wait = _provider_next_retry(provider)
+            print(f"[LLM] {provider} em cooldown por {wait:.1f}s — pulando para próximo provedor.")
+            continue
 
-    for model in FREE_MODELS.get(task_type, FREE_MODELS["general"]):
-        try:
-            return call_llm_text(prompt, system=system, model=model,
-                                 timeout=timeout, force_provider="openrouter")
-        except Exception as e:
-            print(f"[LLM] OpenRouter {model} falhou: {e} — tentando próximo")
+        for model in models:
+            try:
+                return call_llm_text(prompt, system=system, model=model,
+                                     timeout=timeout, force_provider=provider)
+            except ProviderRequestError as e:
+                print(f"[LLM] {provider} {model} falhou: {e} — tentando próximo")
+                _register_provider_failure(provider, e)
+                if not _provider_is_open(provider):
+                    break
+            except Exception as e:
+                print(f"[LLM] {provider} {model} falhou: {e} — tentando próximo")
 
     return "Não foi possível obter resposta — todos os provedores gratuitos falharam, Senhor."
 

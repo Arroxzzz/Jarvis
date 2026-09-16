@@ -214,6 +214,19 @@ def _clean_transcript(text: str) -> str:
     text = re.sub(r"[\x00-\x08\x0b-\x1f]", "", text)
     return text.strip()
 
+
+async def _run_tool_bound(fn, timeout: float, label: str, default=None):
+    """Executa uma tool em thread separada com timeout explícito e mensagem curta."""
+    loop = asyncio.get_running_loop()
+    try:
+        value = await asyncio.wait_for(loop.run_in_executor(None, fn), timeout=timeout)
+        if value is None and default is not None:
+            return default
+        return value
+    except asyncio.TimeoutError:
+        return default or f"{label} excedeu {timeout:.0f}s e foi cancelado, Senhor."
+
+
 TOOL_DECLARATIONS = [
     {
         "name": "open_app",
@@ -781,6 +794,7 @@ class JarvisLive:
         self._metric_turn_started = 0.0
         self._metric_first_audio_received = False
         self._metric_first_audio_played = False
+        self._audio_queue_last_metric = 0.0
         self._session_log: list[str] = []          # conversation turns for end-of-session summary
         self._active_tool_tasks: list[asyncio.Task] = []
         self._active_cancel_events: list[threading.Event] = []   # cancelamento cooperativo (dev_agent etc.)
@@ -792,6 +806,7 @@ class JarvisLive:
         self._watchdog_force_count: int = 0   # disparos consecutivos do watchdog — reset em turno saudável
         self._bg_tasks_pending: int  = 0       # tools rodando em background (code_helper/web_search assíncronos)
         self._bg_tasks_lock          = threading.Lock()
+        self._panel_context_cache: dict[str, set[str]] = {}  # dedupe panel results already injected as context
         self._coulson_stop          = asyncio.Event()
         self._enhanced_live = True  # affective dialog + proactive audio; auto-disabled if the server rejects them
         self._live_candidates: list[str] = []   # preenchido em _resolve_live_model()
@@ -826,6 +841,15 @@ class JarvisLive:
     def _metric(self, event: str, **fields) -> None:
         values = " ".join(f"{key}={value}" for key, value in fields.items())
         print(f"[METRIC] {event}{(' ' + values) if values else ''}")
+
+    def _audio_queue_snapshot(self, side: str) -> dict[str, int | bool]:
+        """Measures queue pressure before any buffer tuning. Intended for diagnostics only."""
+        in_q = self.audio_in_queue
+        out_q = self.out_queue
+        in_len = in_q.qsize() if in_q is not None else 0
+        out_len = out_q.qsize() if out_q is not None else 0
+        underrun = (in_len == 0 and side == "play") or (out_len == 0 and side == "send")
+        return {"side": side, "in_q": in_len, "out_q": out_len, "underrun": int(underrun)}
 
     async def _safe_send_content(self, parts: list, turn_complete: bool = True) -> None:
         """Serializa envios de conteúdo para evitar chamadas concorrentes na sessão Live."""
@@ -880,6 +904,17 @@ class JarvisLive:
             asyncio.run_coroutine_threadsafe(_say(), loop)
         except Exception as e:
             print(f"[PluginSay] {e}")
+
+    def _panel_result_already_seen(self, kind: str, payload: str) -> bool:
+        """Suppress duplicate background-context injections after the result already appeared in the panel."""
+        cache = self._panel_context_cache.setdefault(kind, set())
+        token = payload.strip().lower()
+        if not token:
+            return True
+        if token in cache:
+            return True
+        cache.add(token)
+        return False
 
     def _on_text_command(self, text: str):
         if not self._loop or not self.session:
@@ -1135,16 +1170,28 @@ class JarvisLive:
 
         try:
             if name == "open_app":
-                r = await loop.run_in_executor(None, lambda: open_app(parameters=args, response=None, player=self.ui))
-                result = r or f"Opened {args.get('app_name')}."
+                result = await _run_tool_bound(
+                    lambda: open_app(parameters=args, response=None, player=self.ui),
+                    20,
+                    "open_app",
+                    default=f"Opened {args.get('app_name')}.",
+                )
 
             elif name == "weather_report":
-                r = await loop.run_in_executor(None, lambda: weather_action(parameters=args, player=self.ui))
-                result = r or "Weather delivered."
+                result = await _run_tool_bound(
+                    lambda: weather_action(parameters=args, player=self.ui),
+                    20,
+                    "weather_report",
+                    default="Weather delivered.",
+                )
 
             elif name == "browser_control":
-                r = await loop.run_in_executor(None, lambda: browser_control(parameters=args, player=self.ui))
-                result = r or "Done."
+                result = await _run_tool_bound(
+                    lambda: browser_control(parameters=args, player=self.ui),
+                    25,
+                    "browser_control",
+                    default="Done.",
+                )
 
             elif name == "open_on_monitor":
                 from actions.browser_control import open_url_on_monitor
@@ -1163,21 +1210,37 @@ class JarvisLive:
                 if not _url:
                     result = "Qual URL ou serviço deseja abrir, Senhor?"
                 else:
-                    result = open_url_on_monitor(_url, args.get("monitor", "secondary"))
+                    result = await _run_tool_bound(
+                        lambda: open_url_on_monitor(_url, args.get("monitor", "secondary")),
+                        15,
+                        "open_on_monitor",
+                        default="Não consegui abrir a URL no monitor solicitado, Senhor.",
+                    )
 
             elif name == "file_controller":
-                r = await loop.run_in_executor(None, lambda: file_controller(parameters=args, player=self.ui))
-                result = r or "Done."
+                result = await _run_tool_bound(
+                    lambda: file_controller(parameters=args, player=self.ui),
+                    20,
+                    "file_controller",
+                    default="Done.",
+                )
 
             elif name == "open_folder":
                 from actions.file_controller import open_folder
-                result = await loop.run_in_executor(
-                    None, lambda: open_folder(args.get("path", ""))
+                result = await _run_tool_bound(
+                    lambda: open_folder(args.get("path", "")),
+                    15,
+                    "open_folder",
+                    default="Pasta aberta.",
                 )
 
             elif name == "send_message":
-                r = await loop.run_in_executor(None, lambda: send_message(parameters=args, response=None, player=self.ui, session_memory=None))
-                result = r or f"Message sent to {args.get('receiver')}."
+                result = await _run_tool_bound(
+                    lambda: send_message(parameters=args, response=None, player=self.ui, session_memory=None),
+                    20,
+                    "send_message",
+                    default=f"Message sent to {args.get('receiver')}.",
+                )
 
             elif name == "reminder":
                 result = await self._bounded(loop, lambda: reminder(parameters=args, response=None, player=self.ui), 20, "reminder")
@@ -1247,15 +1310,17 @@ class JarvisLive:
                                 r = "Tempo limite atingido."
                         self.ui.write_log(f"SYS: 💻 Código gerado — verifique o arquivo.")
                         if r:
-                            self.ui.show_content("CODE", r[:500])
-                            _desc_ctx = args.get("description", "")
-                            _path_ctx = args.get("output_path", "área de trabalho")
-                            self._safe_send_content_threadsafe(
-                                f"[CODE_CONTEXT — não leia em voz alta, use como memória] "
-                                f"Código gerado: '{_desc_ctx}'. "
-                                f"Arquivo salvo em: {_path_ctx}. "
-                                f"Conteúdo:\n{r[:1500]}"
-                            )
+                            panel_key = f"code::{_desc[:120]}::{r[:200]}"
+                            if not self._panel_result_already_seen("CODE", panel_key):
+                                self.ui.show_content("CODE", r[:500])
+                                _desc_ctx = args.get("description", "")
+                                _path_ctx = args.get("output_path", "área de trabalho")
+                                self._safe_send_content_threadsafe(
+                                    f"[CODE_CONTEXT — não leia em voz alta, use como memória] "
+                                    f"Código gerado: '{_desc_ctx}'. "
+                                    f"Arquivo salvo em: {_path_ctx}. "
+                                    f"Conteúdo:\n{r[:1500]}"
+                                )
                     finally:
                         with self._bg_tasks_lock:
                             self._bg_tasks_pending = max(0, self._bg_tasks_pending - 1)
@@ -1286,12 +1351,14 @@ class JarvisLive:
                         r = web_search_action(parameters=args, player=self.ui)
                         if r and not r.startswith("No results") and not r.startswith("Search failed"):
                             _label = f"{_mode.upper()} — {_query[:38]}" if _query else _mode.upper()
-                            self.ui.show_content(_label, r)
-                            self.ui.write_log(f"SYS: 🔍 Resultado disponível no painel.")
-                            self._safe_send_content_threadsafe(
-                                f"[SEARCH_CONTEXT — não leia em voz alta, use como memória] "
-                                f"Resultado da pesquisa sobre '{_query}':\n{r[:2000]}"
-                            )
+                            panel_key = f"search::{_query}::{r[:220]}"
+                            if not self._panel_result_already_seen("SEARCH", panel_key):
+                                self.ui.show_content(_label, r)
+                                self.ui.write_log(f"SYS: 🔍 Resultado disponível no painel.")
+                                self._safe_send_content_threadsafe(
+                                    f"[SEARCH_CONTEXT — não leia em voz alta, use como memória] "
+                                    f"Resultado da pesquisa sobre '{_query}':\n{r[:2000]}"
+                                )
                     finally:
                         with self._bg_tasks_lock:
                             self._bg_tasks_pending = max(0, self._bg_tasks_pending - 1)
@@ -1312,8 +1379,13 @@ class JarvisLive:
                 result = await self._bounded(loop, lambda: flight_finder(parameters=args, player=self.ui), 60, "flight_finder")
 
             elif name == "system_status":
-                r = await loop.run_in_executor(None, get_system_status)
-                result = str(r)
+                result = await _run_tool_bound(
+                    get_system_status,
+                    10,
+                    "system_status",
+                    default="Sistema indisponível no momento, Senhor.",
+                )
+                result = str(result)
 
             elif name == "deep_reasoning":
                 query     = args.get("query", "")
@@ -1354,12 +1426,28 @@ class JarvisLive:
                 action = args.get("action", "").lower().strip()
                 topic  = args.get("topic", "").strip()
                 if action == "add" and topic:
-                    result = await asyncio.to_thread(add_monitor, topic)
+                    result = await _run_tool_bound(
+                        lambda: add_monitor(topic),
+                        10,
+                        "manage_monitor.add",
+                        default="Não consegui registrar o monitor, Senhor.",
+                    )
                 elif action == "remove" and topic:
-                    result = await asyncio.to_thread(remove_monitor, topic)
+                    result = await _run_tool_bound(
+                        lambda: remove_monitor(topic),
+                        10,
+                        "manage_monitor.remove",
+                        default="Não consegui remover o monitor, Senhor.",
+                    )
                 elif action == "list":
-                    topics = await asyncio.to_thread(list_monitors)
-                    result = ("Monitoring: " + ", ".join(topics)) if topics else "No topics are being monitored."
+                    result = await _run_tool_bound(
+                        list_monitors,
+                        10,
+                        "manage_monitor.list",
+                        default="Não consegui listar os monitores, Senhor.",
+                    )
+                    if isinstance(result, list):
+                        result = ("Monitoring: " + ", ".join(result)) if result else "No topics are being monitored."
                 else:
                     result = "Specify action (add/remove/list) and a topic."
 
@@ -1380,11 +1468,12 @@ class JarvisLive:
 
             else:
                 if self._plugin_registry.has(name):
-                    r = await loop.run_in_executor(
-                        None,
-                        lambda: self._plugin_registry.run(name, args, player=self.ui, session_memory=None)
+                    result = await _run_tool_bound(
+                        lambda: self._plugin_registry.run(name, args, player=self.ui, session_memory=None),
+                        15,
+                        f"plugin:{name}",
+                        default="Done.",
                     )
-                    result = r or "Done."
                 else:
                     result = f"Unknown tool: {name}"
 
@@ -1427,6 +1516,10 @@ class JarvisLive:
                 print(f"[JARVIS] 🎙️ {_sent} chunks de áudio enviados nos últimos ~5s")
                 _sent = 0
                 _last_log = now
+            if now - self._audio_queue_last_metric > 2.0:
+                snap = self._audio_queue_snapshot("send")
+                self._metric("audio_queue", **snap)
+                self._audio_queue_last_metric = now
 
     def _enqueue_mic_chunk(self, data: bytes) -> None:
         try:
@@ -1659,6 +1752,10 @@ class JarvisLive:
                     # turn_complete (main.py::_receive_audio) e limpo quando
                     # uma nova resposta de áudio começa a chegar — não
                     # precisa (e não deve) ser mexido aqui.
+                    if time.monotonic() - self._audio_queue_last_metric > 2.0:
+                        snap = self._audio_queue_snapshot("play")
+                        self._metric("audio_queue", **snap)
+                        self._audio_queue_last_metric = time.monotonic()
                     if self.audio_in_queue.empty():
                         self.set_speaking(False)
                     continue
@@ -1671,6 +1768,10 @@ class JarvisLive:
                         id=self._metric_turn_id,
                         ms=round((now - self._metric_turn_started) * 1000),
                     )
+                if now - self._audio_queue_last_metric > 2.0:
+                    snap = self._audio_queue_snapshot("play")
+                    self._metric("audio_queue", **snap)
+                    self._audio_queue_last_metric = now
                 self.set_speaking(True)
 
                 # Batch all immediately-available chunks into one write to reduce
