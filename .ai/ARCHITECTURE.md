@@ -63,6 +63,19 @@ O resultado deve carregar caminho e trecho de origem para o modelo. Memórias n�
 confirmadas devem ser apresentadas como hipótese, não como fato. Escrita no vault
 deve ser explícita, auditável e limitada a diretórios permitidos.
 
+### Modos de memória
+
+A camada de memória deverá separar decisão de gravação e persistência:
+
+1. `automatic`: salva somente fatos persistentes e eventos relevantes de projetos;
+2. `suggested`: apresenta uma proposta e aguarda confirmação local;
+3. `explicit`: executa a intenção direta do usuário de salvar ou atualizar.
+
+Cada registro deve carregar origem, data, projeto/contexto e confiança. O modo
+automático não deve registrar a conversa inteira nem dados sensíveis por padrão.
+O Supabase, quando implementado, receberá apenas notas elegíveis pela mesma política
+e continuará sendo espelho incremental, nunca a fonte primária.
+
 ### Contexto do computador
 
 O contexto operacional deve ser obtido por um `ContextResolver` futuro, com fontes

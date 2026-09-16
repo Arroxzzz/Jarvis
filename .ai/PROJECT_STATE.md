@@ -82,6 +82,21 @@ Busca textual e indexação local não equivalem a introduzir um LLM local. Embe
 ou outro índice semântico só devem ser considerados depois de medir custo, memória
 e benefício real.
 
+### Política de gravação da memória
+
+O JARVIS terá três modos complementares:
+
+- **Memória automática:** registra fatos persistentes e marcos claros de projetos,
+  como objetivo, stack, decisões e próximos passos, sem salvar cada frase.
+- **Memória sugerida:** detecta algo potencialmente importante e pergunta ao Senhor
+  antes de gravar.
+- **Memória explícita:** grava imediatamente quando o Senhor disser para lembrar,
+  anotar, salvar ou criar uma nota.
+
+Conversas casuais, transcrições completas, segredos e dados temporários não devem
+ser gravados automaticamente. A política deve manter origem, data, projeto e nível
+de confiança para cada registro.
+
 ### Consciência contextual do computador
 
 O JARVIS deve resolver referências como "o PDF que baixei agora" ou "o código na

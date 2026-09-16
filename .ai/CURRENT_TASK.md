@@ -57,6 +57,9 @@ implementar tudo de uma vez:
     - Busca recursiva local em Markdown implementada em `core/knowledge_vault.py`.
     - Leitura real validada com `Memoria_Jarvis/Bem-vindo`; escrita controlada,
        origem/citações e integração conversacional ainda pendentes.
+      - Política aprovada: memória automática para marcos persistentes, memória
+         sugerida com confirmação e memória explícita por comando direto.
+      - Não registrar conversas inteiras, segredos ou dados temporários automaticamente.
 
 10. Resolver contextual de arquivos e estado do PC
    - Priorizar Downloads, Desktop, janela ativa, navegador e mídia.
@@ -84,6 +87,8 @@ implementar tudo de uma vez:
 
 ## Próximo passo ativo
 
+- Antes de implementar a integração conversacional, definir e testar o contrato de
+   decisão entre memória automática, sugerida e explícita.
 - Continuar a refatoração controlada de `main.py` em blocos pequenos, com regressão
    após cada extração e sem tocar no caminho principal de áudio.
 - Blocos já extraídos: painel/contexto, tarefas em background, visão, rotas de tools,
