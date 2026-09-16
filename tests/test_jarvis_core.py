@@ -260,3 +260,20 @@ def test_file_delete_requires_explicit_confirmation(tmp_path):
 
     confirm = file_controller({"action": "delete", "path": str(tmp_path), "name": "delete_me.txt", "confirmed": "yes"})
     assert "delete" in confirm.lower() or "removed" in confirm.lower() or "trash" in confirm.lower()
+
+
+def test_runtime_config_reads_key_and_writes_cache(tmp_path):
+    from core.runtime_config import get_api_key, read_config, write_config_key
+
+    config_path = tmp_path / "api_keys.json"
+    config_path.write_text('{"gemini_api_key": "test-key"}', encoding="utf-8")
+
+    assert get_api_key(config_path) == "test-key"
+    write_config_key(config_path, "live_model_id_cache", "models/test-live")
+    assert read_config(config_path)["live_model_id_cache"] == "models/test-live"
+
+
+def test_runtime_config_prompt_falls_back_when_missing(tmp_path):
+    from core.runtime_config import DEFAULT_SYSTEM_PROMPT, load_system_prompt
+
+    assert load_system_prompt(tmp_path / "missing-prompt.txt") == DEFAULT_SYSTEM_PROMPT

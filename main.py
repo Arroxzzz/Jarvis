@@ -38,7 +38,6 @@ import json
 import sys
 import traceback
 from datetime import datetime
-from zoneinfo import ZoneInfo
 from pathlib import Path
 
 import sounddevice as sd
@@ -49,8 +48,6 @@ from memory.memory_manager import (
     load_memory, update_memory, format_memory_for_prompt,
     save_session_summary, pop_last_session,
 )
-
-_TZ_BR = ZoneInfo("America/Sao_Paulo")
 
 from actions.file_processor import file_processor
 from actions.flight_finder     import flight_finder
@@ -79,6 +76,24 @@ from actions.web_search        import _news as _fetch_news_sync
 from memory.config_manager     import get_brief_enabled
 from core.plugin_loader        import discover_plugins
 from core.llm_client           import call_llm_text, get_openrouter_model, FREE_MODELS, gemini_call_resilient
+from core.async_tool_runner    import run_bounded as _bounded
+from core.async_tool_runner    import run_tool_bound as _run_tool_bound
+from core.runtime_constants    import (
+    TZ_BR as _TZ_BR,
+    LIVE_MODEL_FALLBACKS,
+    LIVE_MODEL,
+    LIVE_MODEL_CACHE_KEY as _LIVE_MODEL_CACHE_KEY,
+    CHANNELS,
+    SEND_SAMPLE_RATE,
+    RECEIVE_SAMPLE_RATE,
+    CHUNK_SIZE,
+)
+from core.runtime_config       import (
+    get_api_key as _get_api_key_file,
+    load_system_prompt as _load_system_prompt_file,
+    read_config as _read_config_file,
+    write_config_key as _write_config_key_file,
+)
 
 def get_base_dir():
     if getattr(sys, "frozen", False):
@@ -89,57 +104,21 @@ BASE_DIR        = get_base_dir()
 API_CONFIG_PATH = BASE_DIR / "config" / "api_keys.json"
 PROMPT_PATH     = BASE_DIR / "core" / "prompt.txt"
 
-# Candidatos estáticos — usados apenas se a descoberta dinâmica falhar
-# (ex: sem rede no boot). Ordem = preferência (mais recente/estável primeiro).
-LIVE_MODEL_FALLBACKS = [
-    "models/gemini-2.0-flash-live-001",
-    "models/gemini-2.5-flash-native-audio-preview-09-2025",
-    "models/gemini-2.0-flash-exp",
-]
-LIVE_MODEL = LIVE_MODEL_FALLBACKS[0]
-_LIVE_MODEL_CACHE_KEY = "live_model_id_cache"
-
-CHANNELS            = 1
-SEND_SAMPLE_RATE    = 16000
-RECEIVE_SAMPLE_RATE = 24000
-CHUNK_SIZE          = 1024
-
 def _get_api_key() -> str:
-    with open(API_CONFIG_PATH, "r", encoding="utf-8") as f:
-        return json.load(f)["gemini_api_key"]
+    return _get_api_key_file(API_CONFIG_PATH)
 
 
 def _load_system_prompt() -> str:
-    try:
-        return PROMPT_PATH.read_text(encoding="utf-8")
-    except Exception:
-        return (
-            "You are JARVIS, Tony Stark's AI assistant. "
-            "Be concise, direct, and always use the provided tools to complete tasks. "
-            "Never simulate or guess results — always call the appropriate tool."
-        )
+    return _load_system_prompt_file(PROMPT_PATH)
 
 
 def _read_config() -> dict:
-    try:
-        return json.loads(API_CONFIG_PATH.read_text(encoding="utf-8"))
-    except Exception:
-        return {}
+    return _read_config_file(API_CONFIG_PATH)
 
 
 def _write_config_key(key: str, value) -> None:
     try:
-        import os
-        import tempfile
-        data = _read_config()
-        data[key] = value
-        with tempfile.NamedTemporaryFile(
-            "w", dir=API_CONFIG_PATH.parent, delete=False,
-            encoding="utf-8", suffix=".tmp"
-        ) as tf:
-            json.dump(data, tf, indent=4)
-            tmp = tf.name
-        os.replace(tmp, str(API_CONFIG_PATH))
+        _write_config_key_file(API_CONFIG_PATH, key, value)
     except Exception as e:
         print(f"[JARVIS] ⚠️ Config write failed ({key}): {e}")
 
@@ -215,553 +194,7 @@ def _clean_transcript(text: str) -> str:
     return text.strip()
 
 
-async def _run_tool_bound(fn, timeout: float, label: str, default=None):
-    """Executa uma tool em thread separada com timeout explícito e mensagem curta."""
-    loop = asyncio.get_running_loop()
-    try:
-        value = await asyncio.wait_for(loop.run_in_executor(None, fn), timeout=timeout)
-        if value is None and default is not None:
-            return default
-        return value
-    except asyncio.TimeoutError:
-        return default or f"{label} excedeu {timeout:.0f}s e foi cancelado, Senhor."
-
-
-TOOL_DECLARATIONS = [
-    {
-        "name": "open_app",
-        "description": (
-            "Opens any application on the computer. "
-            "Use this whenever the user asks to open, launch, or start any app, "
-            "website, or program. Always call this tool — never just say you opened it."
-        ),
-        "parameters": {
-            "type": "OBJECT",
-            "properties": {
-                "app_name": {
-                    "type": "STRING",
-                    "description": "Exact name of the application (e.g. 'WhatsApp', 'Chrome', 'Spotify')"
-                }
-            },
-            "required": ["app_name"]
-        }
-    },
-    {
-        "name": "web_search",
-        "description": (
-            "Searches the web. Use for ANY question about current facts, events, prices, "
-            "or topics — always prefer this over guessing. "
-            "Modes: 'search' (default), 'news' (latest headlines on a topic), "
-            "'research' (deep comprehensive answer), 'price' (product cost lookup), "
-            "'compare' (side-by-side comparison of items)."
-        ),
-        "parameters": {
-            "type": "OBJECT",
-            "properties": {
-                "query":  {"type": "STRING", "description": "Search query or topic"},
-                "mode":   {"type": "STRING", "description": "search | news | research | price | compare"},
-                "items":  {"type": "ARRAY",  "items": {"type": "STRING"}, "description": "Items to compare (compare mode)"},
-                "aspect": {"type": "STRING", "description": "Comparison aspect: price | specs | reviews | features"},
-            },
-            "required": ["query"]
-        }
-    },
-    {
-        "name": "system_status",
-        "description": (
-            "Returns real-time system metrics: CPU usage, RAM, GPU load, CPU temperature, "
-            "uptime, and process count. Use when the user asks about computer performance, "
-            "temperature, memory, or resource usage."
-        ),
-        "parameters": {
-            "type": "OBJECT",
-            "properties": {},
-        }
-    },
-    {
-        "name": "weather_report",
-        "description": "Gives the weather report to user",
-        "parameters": {
-            "type": "OBJECT",
-            "properties": {
-                "city": {"type": "STRING", "description": "City name"}
-            },
-            "required": ["city"]
-        }
-    },
-    {
-        "name": "send_message",
-        "description": "Sends a text message via WhatsApp, Telegram, or other messaging platform.",
-        "parameters": {
-            "type": "OBJECT",
-            "properties": {
-                "receiver":     {"type": "STRING", "description": "Recipient contact name"},
-                "message_text": {"type": "STRING", "description": "The message to send"},
-                "platform":     {"type": "STRING", "description": "Platform: WhatsApp, Telegram, etc."}
-            },
-            "required": ["receiver", "message_text", "platform"]
-        }
-    },
-    {
-        "name": "reminder",
-        "description": "Sets a timed reminder using Task Scheduler.",
-        "parameters": {
-            "type": "OBJECT",
-            "properties": {
-                "date":    {"type": "STRING", "description": "Date in YYYY-MM-DD format"},
-                "time":    {"type": "STRING", "description": "Time in HH:MM format (24h)"},
-                "message": {"type": "STRING", "description": "Reminder message text"}
-            },
-            "required": ["date", "time", "message"]
-        }
-    },
-    {
-        "name": "youtube_video",
-        "description": (
-            "Controls YouTube. Use for: playing videos, summarizing a video's content, "
-            "getting video info, or showing trending videos."
-        ),
-        "parameters": {
-            "type": "OBJECT",
-            "properties": {
-                "action": {"type": "STRING", "description": "play | summarize | get_info | trending (default: play)"},
-                "query":  {"type": "STRING", "description": "Search query for play action"},
-                "save":   {"type": "BOOLEAN", "description": "Save summary to Notepad (summarize only)"},
-                "region": {"type": "STRING", "description": "Country code for trending e.g. TR, US"},
-                "url":    {"type": "STRING", "description": "Video URL for get_info action"},
-            },
-            "required": []
-        }
-    },
-    {
-        "name": "screen_process",
-        "description": (
-            "Captures the screen or webcam image and lets you analyze it. "
-            "MUST be called when user asks what is on screen, what you see, "
-            "look at camera, analyze my screen, etc. "
-            "You have NO visual ability without this tool. "
-            "After the image is captured it is sent directly to you — describe what you see and answer the user's question. "
-            "When using camera: the live view stays open until user says close it or calls close_camera."
-        ),
-        "parameters": {
-            "type": "OBJECT",
-            "properties": {
-                "angle": {"type": "STRING", "description": "'screen' to capture display, 'camera' for webcam. Default: 'screen'"},
-                "text":  {"type": "STRING", "description": "The question or instruction about the captured image"}
-            },
-            "required": ["text"]
-        }
-    },
-    {
-        "name": "close_camera",
-        "description": (
-            "Closes the live camera view shown on screen. "
-            "Call when user says: close camera, stop camera, turn off camera, "
-            "kamerayı kapat, kapat, creepy, etc."
-        ),
-        "parameters": {"type": "OBJECT", "properties": {}, "required": []}
-    },
-    {
-        "name": "computer_settings",
-        "description": (
-            "Controls the computer: volume, brightness, window management, keyboard shortcuts, "
-            "typing text on screen, closing apps, fullscreen, dark mode, WiFi, restart, shutdown, "
-            "scrolling, tab management, zoom, screenshots, lock screen, refresh/reload page. "
-            "Use for ANY single computer control command."
-        ),
-        "parameters": {
-            "type": "OBJECT",
-            "properties": {
-                "action":      {"type": "STRING", "description": "The action to perform"},
-                "description": {"type": "STRING", "description": "Natural language description of what to do"},
-                "value":       {"type": "STRING", "description": "Optional value: volume level, text to type, etc."}
-            },
-            "required": []
-        }
-    },
-    {
-        "name": "browser_control",
-        "description": (
-            "Controls any web browser. Use for: opening websites, searching the web, "
-            "clicking elements, filling forms, scrolling, screenshots, navigation, any web-based task. "
-            "Simple open/search requests launch the user's own browser normally (their real profile "
-            "and logged-in accounts); interactive actions (click, type, fill_form...) attach an "
-            "automation browser. "
-            "Always pass the 'browser' parameter when the user specifies a browser (e.g. 'open in Edge', "
-            "'use Firefox', 'open Chrome'). Multiple browsers can run simultaneously."
-        ),
-        "parameters": {
-            "type": "OBJECT",
-            "properties": {
-                "action":      {"type": "STRING", "description": "go_to | search | click | type | scroll | fill_form | smart_click | smart_type | get_text | get_url | press | new_tab | close_tab | screenshot | back | forward | reload | switch | list_browsers | close | close_all"},
-                "browser":     {"type": "STRING", "description": "Target browser: chrome | edge | firefox | opera | operagx | brave | vivaldi | safari. Omit to use the currently active browser."},
-                "url":         {"type": "STRING", "description": "URL for go_to / new_tab action"},
-                "query":       {"type": "STRING", "description": "Search query for search action"},
-                "engine":      {"type": "STRING", "description": "Search engine: google | bing | duckduckgo | yandex (default: google)"},
-                "selector":    {"type": "STRING", "description": "CSS selector for click/type"},
-                "text":        {"type": "STRING", "description": "Text to click or type"},
-                "description": {"type": "STRING", "description": "Element description for smart_click/smart_type"},
-                "direction":   {"type": "STRING", "description": "up | down for scroll"},
-                "amount":      {"type": "INTEGER", "description": "Scroll amount in pixels (default: 500)"},
-                "key":         {"type": "STRING", "description": "Key name for press action (e.g. Enter, Escape, F5)"},
-                "path":        {"type": "STRING", "description": "Save path for screenshot"},
-                "incognito":   {"type": "BOOLEAN", "description": "Open in private/incognito mode"},
-                "clear_first": {"type": "BOOLEAN", "description": "Clear field before typing (default: true)"},
-            },
-            "required": ["action"]
-        }
-    },
-    {
-        "name": "open_on_monitor",
-        "description": (
-            "Abre uma URL ou serviço web diretamente em um monitor específico "
-            "sem sequestrar o mouse ou roubar foco. Use para comandos como "
-            "'abre o Gmail no segundo monitor', 'coloca o YouTube na TV', "
-            "'abre o WhatsApp Web no monitor secundário'."
-        ),
-        "parameters": {
-            "type": "OBJECT",
-            "properties": {
-                "url":     {"type": "STRING", "description": "URL completa a abrir"},
-                "monitor": {"type": "STRING", "description": "primary | secondary | tv"},
-                "service": {"type": "STRING", "description": "Nome do serviço (gmail, youtube, whatsapp, etc.) — usado se url não fornecida"}
-            },
-            "required": ["monitor"]
-        }
-    },
-    {
-        "name": "file_controller",
-        "description": "Manages files and folders: list, create, delete, move, copy, rename, read, write, find, disk usage.",
-        "parameters": {
-            "type": "OBJECT",
-            "properties": {
-                "action":      {"type": "STRING", "description": "list | create_file | create_folder | delete | move | copy | rename | read | write | find | largest | disk_usage | organize_desktop | info"},
-                "path":        {"type": "STRING", "description": "File/folder path or shortcut: desktop, downloads, documents, home"},
-                "destination": {"type": "STRING", "description": "Destination path for move/copy"},
-                "new_name":    {"type": "STRING", "description": "New name for rename"},
-                "content":     {"type": "STRING", "description": "Content for create_file/write"},
-                "name":        {"type": "STRING", "description": "File name to search for"},
-                "extension":   {"type": "STRING", "description": "File extension to search (e.g. .pdf)"},
-                "count":       {"type": "INTEGER", "description": "Number of results for largest"},
-            },
-            "required": ["action"]
-        }
-    },
-    {
-        "name": "open_folder",
-        "description": (
-            "Abre uma pasta no Explorer do Windows sem roubar foco ou simular "
-            "teclado. Use quando o usuário pedir para 'abrir a pasta X', "
-            "'me mostra a pasta', 'abre no explorer'. NUNCA use open_app para pastas."
-        ),
-        "parameters": {
-            "type": "OBJECT",
-            "properties": {
-                "path": {"type": "STRING", "description": "Caminho ou nome da pasta (ex: 'desktop/Python Scripts')"}
-            },
-            "required": ["path"]
-        }
-    },
-    {
-        "name": "desktop_control",
-        "description": "Controls the desktop: wallpaper, organize, clean, list, stats.",
-        "parameters": {
-            "type": "OBJECT",
-            "properties": {
-                "action": {"type": "STRING", "description": "wallpaper | wallpaper_url | organize | clean | list | stats | task"},
-                "path":   {"type": "STRING", "description": "Image path for wallpaper"},
-                "url":    {"type": "STRING", "description": "Image URL for wallpaper_url"},
-                "mode":   {"type": "STRING", "description": "by_type or by_date for organize"},
-                "task":   {"type": "STRING", "description": "Natural language desktop task"},
-            },
-            "required": ["action"]
-        }
-    },
-    {
-        "name": "code_helper",
-        "description": "Writes, edits, explains, runs, or builds code files.",
-        "parameters": {
-            "type": "OBJECT",
-            "properties": {
-                "action":      {"type": "STRING", "description": "write | edit | explain | run | build | auto (default: auto)"},
-                "description": {"type": "STRING", "description": "What the code should do or what change to make"},
-                "language":    {"type": "STRING", "description": "Programming language (default: python)"},
-                "output_path": {"type": "STRING", "description": "Where to save the file"},
-                "file_path":   {"type": "STRING", "description": "Path to existing file for edit/explain/run/build"},
-                "code":        {"type": "STRING", "description": "Raw code string for explain"},
-                "args":        {"type": "STRING", "description": "CLI arguments for run/build"},
-                "timeout":     {"type": "INTEGER", "description": "Execution timeout in seconds (default: 30)"},
-            },
-            "required": ["action"]
-        }
-    },
-    {
-        "name": "dev_agent",
-        "description": "Builds complete multi-file projects from scratch: plans, writes files, installs deps, opens VSCode, runs and fixes errors.",
-        "parameters": {
-            "type": "OBJECT",
-            "properties": {
-                "description":  {"type": "STRING", "description": "What the project should do"},
-                "language":     {"type": "STRING", "description": "Programming language (default: python)"},
-                "project_name": {"type": "STRING", "description": "Optional project folder name"},
-                "timeout":      {"type": "INTEGER", "description": "Run timeout in seconds (default: 30)"},
-            },
-            "required": ["description"]
-        }
-    },
-    {
-        "name": "computer_control",
-        "description": "Direct computer control: type, click, hotkeys, scroll, move mouse, screenshots, find elements on screen.",
-        "parameters": {
-            "type": "OBJECT",
-            "properties": {
-                "action":      {"type": "STRING", "description": "type | smart_type | click | double_click | right_click | hotkey | press | scroll | move | copy | paste | screenshot | wait | clear_field | focus_window | screen_find | screen_click | random_data | user_data"},
-                "text":        {"type": "STRING", "description": "Text to type or paste"},
-                "x":           {"type": "INTEGER", "description": "X coordinate"},
-                "y":           {"type": "INTEGER", "description": "Y coordinate"},
-                "keys":        {"type": "STRING", "description": "Key combination e.g. 'ctrl+c'"},
-                "key":         {"type": "STRING", "description": "Single key e.g. 'enter'"},
-                "direction":   {"type": "STRING", "description": "up | down | left | right"},
-                "amount":      {"type": "INTEGER", "description": "Scroll amount (default: 3)"},
-                "seconds":     {"type": "NUMBER",  "description": "Seconds to wait"},
-                "title":       {"type": "STRING",  "description": "Window title for focus_window"},
-                "description": {"type": "STRING",  "description": "Element description for screen_find/screen_click"},
-                "type":        {"type": "STRING",  "description": "Data type for random_data"},
-                "field":       {"type": "STRING",  "description": "Field for user_data: name|email|city"},
-                "clear_first": {"type": "BOOLEAN", "description": "Clear field before typing (default: true)"},
-                "path":        {"type": "STRING",  "description": "Save path for screenshot"},
-            },
-            "required": ["action"]
-        }
-    },
-    {
-        "name": "game_updater",
-        "description": (
-            "THE ONLY tool for ANY Steam or Epic Games request. "
-            "Use for: installing, downloading, updating games, listing installed games, "
-            "checking download status, scheduling updates. "
-            "ALWAYS call directly for any Steam/Epic/game request. "
-            "NEVER use browser_control or web_search for Steam/Epic."
-        ),
-        "parameters": {
-            "type": "OBJECT",
-            "properties": {
-                "action":    {"type": "STRING",  "description": "update | install | list | download_status | schedule | cancel_schedule | schedule_status (default: update)"},
-                "platform":  {"type": "STRING",  "description": "steam | epic | both (default: both)"},
-                "game_name": {"type": "STRING",  "description": "Game name (partial match supported)"},
-                "app_id":    {"type": "STRING",  "description": "Steam AppID for install (optional)"},
-                "hour":      {"type": "INTEGER", "description": "Hour for scheduled update 0-23 (default: 3)"},
-                "minute":    {"type": "INTEGER", "description": "Minute for scheduled update 0-59 (default: 0)"},
-                "shutdown_when_done": {"type": "BOOLEAN", "description": "Shut down PC when download finishes"},
-            },
-            "required": []
-        }
-    },
-    {
-        "name": "flight_finder",
-        "description": "Searches Google Flights and speaks the best options.",
-        "parameters": {
-            "type": "OBJECT",
-            "properties": {
-                "origin":      {"type": "STRING",  "description": "Departure city or airport code"},
-                "destination": {"type": "STRING",  "description": "Arrival city or airport code"},
-                "date":        {"type": "STRING",  "description": "Departure date (any format)"},
-                "return_date": {"type": "STRING",  "description": "Return date for round trips"},
-                "passengers":  {"type": "INTEGER", "description": "Number of passengers (default: 1)"},
-                "cabin":       {"type": "STRING",  "description": "economy | premium | business | first"},
-                "save":        {"type": "BOOLEAN", "description": "Save results to Notepad"},
-            },
-            "required": ["origin", "destination", "date"]
-        }
-    },
-    {
-        "name": "manage_monitor",
-        "description": (
-            "Add, remove, or list background monitoring topics. "
-            "JARVIS checks these topics once a day and alerts the user when there is a new development. "
-            "Use 'add' when the user says 'monitor X', 'track X', 'follow X'. "
-            "Use 'remove' when the user says 'stop monitoring X'. "
-            "Use 'list' when the user asks what is being monitored. "
-            "Do NOT add crypto, financial, or trading topics."
-        ),
-        "parameters": {
-            "type": "OBJECT",
-            "properties": {
-                "action": {
-                    "type":        "STRING",
-                    "description": "add | remove | list",
-                },
-                "topic": {
-                    "type":        "STRING",
-                    "description": "Topic to monitor or stop monitoring (e.g. 'space exploration', 'AI news')",
-                },
-            },
-            "required": ["action"],
-        },
-    },
-    {
-        "name": "shutdown_jarvis",
-        "description": (
-            "Shuts down the assistant completely. "
-            "Call this when the user expresses intent to end the conversation, "
-            "close the assistant, say goodbye, or stop Jarvis. "
-            "The user can say this in ANY language."
-        ),
-        "parameters": {
-            "type": "OBJECT",
-            "properties": {},
-        }
-    },
-    {
-    "name": "file_processor",
-    "description": (
-        "Processes any file that the user has uploaded or dropped onto the interface. "
-        "Use this when the user refers to an uploaded file and wants an action on it. "
-        "Supports: images (describe/ocr/resize/compress/convert), "
-        "PDFs (summarize/extract_text/to_word), "
-        "Word docs & text files (summarize/fix/reformat/translate), "
-        "CSV/Excel (analyze/stats/filter/sort/convert), "
-        "JSON/XML (validate/format/analyze), "
-        "code files (explain/review/fix/optimize/run/document/test), "
-        "audio (transcribe/trim/convert/info), "
-        "video (trim/extract_audio/extract_frame/compress/transcribe/info), "
-        "archives (list/extract), "
-        "presentations (summarize/extract_text). "
-        "ALWAYS call this tool when a file has been uploaded and the user gives a command about it. "
-        "If the user's command is ambiguous, pick the most logical action for that file type."
-    ),
-    "parameters": {
-        "type": "OBJECT",
-        "properties": {
-            "file_path": {
-                "type": "STRING",
-                "description": "Full path to the uploaded file. Leave empty to use the currently uploaded file."
-            },
-            "action": {
-                "type": "STRING",
-                "description": (
-                    "What to do with the file. Examples by type:\n"
-                    "image: describe | ocr | resize | compress | convert | info\n"
-                    "pdf: summarize | extract_text | to_word | info\n"
-                    "docx/txt: summarize | fix | reformat | translate_hint | word_count | to_bullet\n"
-                    "csv/excel: analyze | stats | filter | sort | convert | info\n"
-                    "json: validate | format | analyze | to_csv\n"
-                    "code: explain | review | fix | optimize | run | document | test\n"
-                    "audio: transcribe | trim | convert | info\n"
-                    "video: trim | extract_audio | extract_frame | compress | transcribe | info | convert\n"
-                    "archive: list | extract\n"
-                    "pptx: summarize | extract_text | analyze"
-                )
-            },
-            "instruction": {
-                "type": "STRING",
-                "description": "Free-form instruction if action doesn't cover it. E.g. 'translate this to Turkish', 'find all email addresses'"
-            },
-            "format": {
-                "type": "STRING",
-                "description": "Target format for conversion. E.g. 'mp3', 'pdf', 'csv', 'png'"
-            },
-            "width":     {"type": "INTEGER", "description": "Target width for image resize"},
-            "height":    {"type": "INTEGER", "description": "Target height for image resize"},
-            "scale":     {"type": "NUMBER",  "description": "Scale factor for image resize (e.g. 0.5)"},
-            "quality":   {"type": "INTEGER", "description": "Quality 1-100 for image/video compress"},
-            "start":     {"type": "STRING",  "description": "Start time for trim: seconds or HH:MM:SS"},
-            "end":       {"type": "STRING",  "description": "End time for trim: seconds or HH:MM:SS"},
-            "timestamp": {"type": "STRING",  "description": "Timestamp for video frame extraction HH:MM:SS"},
-            "column":    {"type": "STRING",  "description": "Column name for CSV filter/sort"},
-            "value":     {"type": "STRING",  "description": "Filter value for CSV filter"},
-            "condition": {"type": "STRING",  "description": "Filter condition: equals|contains|gt|lt"},
-            "ascending": {"type": "BOOLEAN", "description": "Sort order for CSV sort (default: true)"},
-            "save":      {"type": "BOOLEAN", "description": "Save result to file (default: true)"},
-            "destination": {"type": "STRING", "description": "Output folder for archive extract"},
-        },
-        "required": []
-    }
-},
-    {
-        "name": "deep_reasoning",
-        "description": (
-            "Consulta um modelo de raciocínio externo (OpenRouter, gratuito) para "
-            "análises genuinamente complexas, geração/revisão de código difícil, ou "
-            "problemas que exigem raciocínio estendido além da resposta imediata do "
-            "Gemini Live. PROIBIDO usar para aritmética, conversões, perguntas "
-            "factuais simples, resumos básicos, traduções, explicações curtas, "
-            "pesquisas ou qualquer tarefa que o Gemini Live possa responder "
-            "diretamente. Use APENAS quando o usuário pedir análise profunda ou "
-            "quando a complexidade for inequívoca. "
-            "task_type='code' para programação, 'reasoning' para lógica/análise "
-            "profunda, 'general' para o restante."
-        ),
-        "parameters": {
-            "type": "OBJECT",
-            "properties": {
-                "query":     {"type": "STRING", "description": "A pergunta ou tarefa completa, com todo o contexto necessário"},
-                "task_type": {"type": "STRING", "description": "code | reasoning | general (default: general)"},
-            },
-            "required": ["query"]
-        }
-    },
-    {
-        "name": "save_memory",
-        "description": (
-            "Save an important personal fact about the user to long-term memory. "
-            "Call this silently whenever the user reveals something worth remembering: "
-            "name, age, city, job, preferences, hobbies, relationships, projects, or future plans. "
-            "Do NOT call for: weather, reminders, searches, or one-time commands. "
-            "Do NOT announce that you are saving — just call it silently. "
-            "Values must be in English regardless of the conversation language."
-        ),
-        "parameters": {
-            "type": "OBJECT",
-            "properties": {
-                "category": {
-                    "type": "STRING",
-                    "description": (
-                        "identity — name, age, birthday, city, job, language, nationality | "
-                        "preferences — favorite food/color/music/film/game/sport, hobbies | "
-                        "projects — active projects, goals, things being built | "
-                        "relationships — friends, family, partner, colleagues | "
-                        "wishes — future plans, things to buy, travel dreams | "
-                        "notes — habits, schedule, anything else worth remembering"
-                    )
-                },
-                "key":   {"type": "STRING", "description": "Short snake_case key (e.g. name, favorite_food, sister_name)"},
-                "value": {"type": "STRING", "description": "Concise value in English (e.g. Fatih, pizza, older sister)"},
-            },
-            "required": ["category", "key", "value"]
-        }
-    },
-    {
-        "name": "knowledge_note",
-        "description": (
-            "Gerencia notas de conhecimento pessoal em Markdown (estilo Obsidian) — "
-            "diferente de save_memory (que guarda fatos curtos estruturados). Use "
-            "para anotações mais longas: resumos de aula, ideias de projeto, "
-            "planejamento pessoal. Ações: write (criar/sobrescrever), append "
-            "(adicionar ao final), read, list, search."
-        ),
-        "parameters": {
-            "type": "OBJECT",
-            "properties": {
-                "action":  {"type": "STRING", "description": "write | append | read | list | search"},
-                "name":    {"type": "STRING", "description": "Nome da nota (sem extensão)"},
-                "content": {"type": "STRING", "description": "Conteúdo para write/append"},
-                "query":   {"type": "STRING", "description": "Termo de busca para search"},
-            },
-            "required": ["action"]
-        }
-    },
-    {
-        "name": "sync_memory",
-        "description": (
-            "Sincroniza memória e notas de conhecimento com a nuvem (Supabase), de "
-            "forma criptografada. Use APENAS quando o usuário pedir explicitamente "
-            "('sincronize', 'salve na nuvem', 'sincronize tudo'). Nunca chame "
-            "proativamente ou por iniciativa própria."
-        ),
-        "parameters": {"type": "OBJECT", "properties": {}}
-    },
-]
+from core.tool_declarations import TOOL_DECLARATIONS
 
 class JarvisLive:
 
@@ -916,6 +349,33 @@ class JarvisLive:
         cache.add(token)
         return False
 
+    def _deliver_panel_result(self, kind: str, label: str, payload: str, body: str, context_prefix: str) -> None:
+        """Show a result in the UI panel once and inject it into the live context only when it is new."""
+        panel_key = f"{kind.lower()}::{payload[:220]}"
+        if self._panel_result_already_seen(kind, panel_key):
+            return
+        self.ui.show_content(label, body)
+        self.ui.write_log(f"SYS: {label} disponível no painel.")
+        self._safe_send_content_threadsafe(
+            f"[{context_prefix} — não leia em voz alta, use como memória]\n{body[:2000]}"
+        )
+
+    def _spawn_background_task(self, fn, *, task_name: str = "background") -> None:
+        """Schedule a background task while keeping the pending-counter bookkeeping centralized."""
+        loop = asyncio.get_event_loop()
+
+        def _runner():
+            with self._bg_tasks_lock:
+                self._bg_tasks_pending += 1
+            try:
+                fn()
+            finally:
+                with self._bg_tasks_lock:
+                    self._bg_tasks_pending = max(0, self._bg_tasks_pending - 1)
+                print(f"[JARVIS] 🔄 {task_name} finished")
+
+        loop.run_in_executor(None, _runner)
+
     def _on_text_command(self, text: str):
         if not self._loop or not self.session:
             return
@@ -980,12 +440,6 @@ class JarvisLive:
         short = str(error)[:120]
         self.ui.write_log(f"ERR: {tool_name} — {short}")
         self.speak(f"Sir, {tool_name} encountered an error. {short}")
-
-    async def _bounded(self, loop, fn, timeout: float, label: str) -> str:
-        try:
-            return await asyncio.wait_for(loop.run_in_executor(None, fn), timeout=timeout)
-        except asyncio.TimeoutError:
-            return f"{label} excedeu {timeout:.0f}s e foi cancelado, Senhor."
 
     def _build_config(self) -> types.LiveConnectConfig:
         # Load customization from config
@@ -1081,6 +535,320 @@ class JarvisLive:
                 ms=round((time.monotonic() - started) * 1000),
             )
 
+    async def _handle_screen_process(self, args: dict, loop) -> str:
+        """Handle the screen/camera capture flow without expanding _execute_tool_impl further."""
+        import time as _t_mod
+        _now = _t_mod.monotonic()
+        _cooldown = 4.0  # seconds — covers echo window after speaking ends
+        if self._vision_busy or (_now - self._vision_last_time) < _cooldown:
+            _wait = max(0, _cooldown - (_now - self._vision_last_time))
+            print(f"[Vision] ⏳ Cooldown active ({_wait:.1f}s remaining) — ignoring duplicate call")
+            return "Vision is still processing the previous request. I will not call this again."
+
+        self._vision_busy = True
+        self._vision_last_time = _now
+        try:
+            angle = args.get("angle", "screen").lower()
+            user_text = args.get("text", "What do you see?")
+            if angle == "camera":
+                img_b, mime_t = await loop.run_in_executor(None, _capture_camera)
+                self.ui.start_camera_stream()
+                self._vision_cam_active = True
+                print(f"[Vision] 📷 Camera: {len(img_b):,} bytes")
+                _stall = "camera"
+            else:
+                img_b, mime_t = await loop.run_in_executor(None, _capture_screen)
+                print(f"[Vision] 🖥️  Screen: {len(img_b):,} bytes")
+                _stall = "screen"
+            self._pending_vision = (img_b, mime_t, user_text, angle)
+            return (
+                f"[VISION_ACTIVE] {_stall.capitalize()} captured. "
+                f"Immediately say ONE short natural sentence in the user's own language, "
+                f"telling them you are looking at their {_stall} right now. "
+                f"Do NOT describe or guess content — the actual image arrives in the NEXT message."
+            )
+        except Exception as e:
+            self._vision_busy = False
+            return f"Falha ao capturar {args.get('angle', 'screen')}, Senhor: {e}"
+
+    async def _handle_simple_tool_route(self, name: str, args: dict, loop) -> str | None:
+        """Centralizes simple, time-bounded tools that can be run under a single helper."""
+        if name == "open_app":
+            return await _run_tool_bound(
+                lambda: open_app(parameters=args, response=None, player=self.ui),
+                20,
+                "open_app",
+                default=f"Opened {args.get('app_name')}.",
+            )
+
+        if name == "weather_report":
+            return await _run_tool_bound(
+                lambda: weather_action(parameters=args, player=self.ui),
+                20,
+                "weather_report",
+                default="Weather delivered.",
+            )
+
+        if name == "browser_control":
+            return await _run_tool_bound(
+                lambda: browser_control(parameters=args, player=self.ui),
+                25,
+                "browser_control",
+                default="Done.",
+            )
+
+        if name == "open_on_monitor":
+            from actions.browser_control import open_url_on_monitor
+            _service_urls = {
+                "gmail":     "https://mail.google.com",
+                "youtube":   "https://youtube.com",
+                "whatsapp":  "https://web.whatsapp.com",
+                "calendar":  "https://calendar.google.com",
+                "drive":     "https://drive.google.com",
+                "notion":    "https://notion.so",
+                "github":    "https://github.com",
+            }
+            _url = args.get("url") or _service_urls.get(
+                args.get("service", "").lower(), ""
+            )
+            if not _url:
+                return "Qual URL ou serviço deseja abrir, Senhor?"
+            return await _run_tool_bound(
+                lambda: open_url_on_monitor(_url, args.get("monitor", "secondary")),
+                15,
+                "open_on_monitor",
+                default="Não consegui abrir a URL no monitor solicitado, Senhor.",
+            )
+
+        if name == "file_controller":
+            return await _run_tool_bound(
+                lambda: file_controller(parameters=args, player=self.ui),
+                20,
+                "file_controller",
+                default="Done.",
+            )
+
+        if name == "open_folder":
+            from actions.file_controller import open_folder
+            return await _run_tool_bound(
+                lambda: open_folder(args.get("path", "")),
+                15,
+                "open_folder",
+                default="Pasta aberta.",
+            )
+
+        if name == "send_message":
+            return await _run_tool_bound(
+                lambda: send_message(parameters=args, response=None, player=self.ui, session_memory=None),
+                20,
+                "send_message",
+                default=f"Message sent to {args.get('receiver')}.",
+            )
+
+        if name == "reminder":
+            return await self._bounded(loop, lambda: reminder(parameters=args, response=None, player=self.ui), 20, "reminder")
+
+        if name == "youtube_video":
+            return await self._bounded(loop, lambda: youtube_video(parameters=args, response=None, player=self.ui), 25, "youtube_video")
+
+        return None
+
+    async def _handle_advanced_tool_route(self, name: str, args: dict, loop) -> str:
+        """Roteia ferramentas mais complexas para manter _execute_tool_impl menor e mais legível."""
+        if name == "screen_process":
+            return await self._handle_screen_process(args, loop)
+
+        if name == "close_camera":
+            self.ui.stop_camera_stream()
+            return "Camera closed."
+
+        if name == "computer_settings":
+            return await self._bounded(loop, lambda: computer_settings(parameters=args, response=None, player=self.ui), 15, "computer_settings")
+
+        if name == "desktop_control":
+            return await self._bounded(loop, lambda: desktop_control(parameters=args, player=self.ui), 30, "desktop_control")
+
+        if name == "code_helper":
+            _desc = args.get("description", "") or "o código"
+            self.ui.write_log(f"SYS: 💻 Gerando código: {_desc[:60]}")
+            def _bg_code():
+                import concurrent.futures
+                try:
+                    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+                        fut = ex.submit(code_helper, parameters=args,
+                                        player=self.ui, speak=None)
+                        try:
+                            r = fut.result(timeout=120)
+                        except concurrent.futures.TimeoutError:
+                            r = "Tempo limite atingido."
+                    self.ui.write_log(f"SYS: 💻 Código gerado — verifique o arquivo.")
+                    if r:
+                        _desc_ctx = args.get("description", "")
+                        _path_ctx = args.get("output_path", "área de trabalho")
+                        body = (
+                            f"Código gerado: '{_desc_ctx}'.\n"
+                            f"Arquivo salvo em: {_path_ctx}.\n\n{r[:1500]}"
+                        )
+                        self._deliver_panel_result(
+                            kind="CODE",
+                            label="CODE",
+                            payload=f"{_desc[:120]}::{r[:200]}",
+                            body=r[:500],
+                            context_prefix="CODE_CONTEXT",
+                        )
+                        if not self._panel_result_already_seen("CODE", f"{_desc[:120]}::{r[:200]}"):
+                            self._safe_send_content_threadsafe(
+                                f"[CODE_CONTEXT — não leia em voz alta, use como memória]\n"
+                                f"Código gerado: '{_desc_ctx}'.\n"
+                                f"Arquivo salvo em: {_path_ctx}.\n\n{r[:1500]}"
+                            )
+                finally:
+                    pass
+            self._spawn_background_task(_bg_code, task_name="code_helper")
+            return f"Criando o código agora, Senhor — {_desc[:60]}."
+
+        if name == "dev_agent":
+            _cancel_ev = threading.Event()
+            self._active_cancel_events.append(_cancel_ev)
+            try:
+                return await self._bounded(
+                    loop,
+                    lambda: dev_agent(parameters=args, player=self.ui, speak=self.speak, cancel_event=_cancel_ev),
+                    180, "dev_agent"
+                )
+            finally:
+                if _cancel_ev in self._active_cancel_events:
+                    self._active_cancel_events.remove(_cancel_ev)
+
+        if name == "web_search":
+            _mode = args.get("mode", "search")
+            _query = args.get("query") or ", ".join(args.get("items", []))
+            self.ui.write_log(f"SYS: 🔍 Pesquisando: {_query}")
+            def _bg_search():
+                r = web_search_action(parameters=args, player=self.ui)
+                if r and not r.startswith("No results") and not r.startswith("Search failed"):
+                    _label = f"{_mode.upper()} — {_query[:38]}" if _query else _mode.upper()
+                    self._deliver_panel_result(
+                        kind="SEARCH",
+                        label=_label,
+                        payload=f"{_query}::{r[:220]}",
+                        body=r,
+                        context_prefix="SEARCH_CONTEXT",
+                    )
+            self._spawn_background_task(_bg_search, task_name="web_search")
+            return f"Pesquisando sobre {_query}, Senhor." if _query else "Pesquisando, Senhor."
+
+        if name == "file_processor":
+            if not args.get("file_path") and self.ui.current_file:
+                args["file_path"] = self.ui.current_file
+            return await self._bounded(loop, lambda: file_processor(parameters=args, player=self.ui, speak=self.speak), 120, "file_processor")
+
+        if name == "computer_control":
+            return await self._bounded(loop, lambda: computer_control(parameters=args, player=self.ui), 20, "computer_control")
+
+        if name == "game_updater":
+            return await self._bounded(loop, lambda: game_updater(parameters=args, player=self.ui, speak=self.speak), 60, "game_updater")
+
+        if name == "flight_finder":
+            return await self._bounded(loop, lambda: flight_finder(parameters=args, player=self.ui), 60, "flight_finder")
+
+        if name == "system_status":
+            result = await _run_tool_bound(
+                get_system_status,
+                10,
+                "system_status",
+                default="Sistema indisponível no momento, Senhor.",
+            )
+            return str(result)
+
+        if name == "deep_reasoning":
+            query     = args.get("query", "")
+            task_type = args.get("task_type", "general").strip().lower()
+            if task_type not in FREE_MODELS:
+                task_type = "general"
+
+            def _ask_openrouter() -> str:
+                last_err = None
+                for model in FREE_MODELS[task_type]:
+                    try:
+                        return call_llm_text(
+                            query,
+                            system="Você é um especialista em raciocínio técnico. Responda em PT-BR, direto e completo.",
+                            model=model,
+                            timeout=25,
+                            force_provider="openrouter",
+                        )
+                    except Exception as e:
+                        last_err = e
+                        print(f"[DeepReasoning] {model} falhou: {e} — tentando próximo")
+                        continue
+                raise RuntimeError(f"Todos os modelos gratuitos falharam: {last_err}")
+
+            try:
+                r = await asyncio.wait_for(
+                    loop.run_in_executor(None, _ask_openrouter), timeout=80
+                )
+                return r or "Sem resposta do modelo de raciocínio."
+            except asyncio.TimeoutError:
+                return "deep_reasoning demorou demais e foi cancelado, Senhor. Tente novamente ou reformule a pergunta."
+            except Exception as e:
+                return f"deep_reasoning falhou, Senhor: {e}"
+
+        if name == "manage_monitor":
+            action = args.get("action", "").lower().strip()
+            topic  = args.get("topic", "").strip()
+            if action == "add" and topic:
+                return await _run_tool_bound(
+                    lambda: add_monitor(topic),
+                    10,
+                    "manage_monitor.add",
+                    default="Não consegui registrar o monitor, Senhor.",
+                )
+            if action == "remove" and topic:
+                return await _run_tool_bound(
+                    lambda: remove_monitor(topic),
+                    10,
+                    "manage_monitor.remove",
+                    default="Não consegui remover o monitor, Senhor.",
+                )
+            if action == "list":
+                result = await _run_tool_bound(
+                    list_monitors,
+                    10,
+                    "manage_monitor.list",
+                    default="Não consegui listar os monitores, Senhor.",
+                )
+                if isinstance(result, list):
+                    return ("Monitoring: " + ", ".join(result)) if result else "No topics are being monitored."
+                return str(result)
+            return "Specify action (add/remove/list) and a topic."
+
+        if name == "shutdown_jarvis":
+            self.ui.write_log("SYS: Shutdown requested.")
+            async def _do_shutdown():
+                await self._save_session_summary()
+                try:
+                    await self._safe_send_content(
+                        [{"text": "Say a brief natural goodbye to the user."}]
+                    )
+                except Exception:
+                    pass
+                await asyncio.sleep(1.5)
+                import os as _os
+                _os._exit(0)
+            asyncio.create_task(_do_shutdown())
+            return "Shutting down, Senhor."
+
+        if self._plugin_registry.has(name):
+            return await _run_tool_bound(
+                lambda: self._plugin_registry.run(name, args, player=self.ui, session_memory=None),
+                15,
+                f"plugin:{name}",
+                default="Done.",
+            )
+
+        return f"Unknown tool: {name}"
+
     async def _execute_tool_impl(self, fc) -> types.FunctionResponse:
         name = fc.name
         args = dict(fc.args or {})
@@ -1137,8 +905,6 @@ class JarvisLive:
             self.ui.write_log("SYS: Sincronizando com a nuvem...")
 
             def _bg_sync():
-                with self._bg_tasks_lock:
-                    self._bg_tasks_pending += 1
                 try:
                     from core.sync_manager import sync_all
                     r = sync_all()
@@ -1151,12 +917,8 @@ class JarvisLive:
                     )
                 except Exception as e:
                     self.ui.write_log(f"SYS: ⚠ Falha no sync: {e}")
-                finally:
-                    with self._bg_tasks_lock:
-                        self._bg_tasks_pending = max(0, self._bg_tasks_pending - 1)
 
-            loop = asyncio.get_event_loop()
-            loop.run_in_executor(None, _bg_sync)
+            self._spawn_background_task(_bg_sync, task_name="sync_memory")
             result = "Sincronizando agora, Senhor. Te aviso quando terminar."
             if not self.ui.muted:
                 self.ui.set_state("LISTENING")
@@ -1169,313 +931,11 @@ class JarvisLive:
         result = "Done."
 
         try:
-            if name == "open_app":
-                result = await _run_tool_bound(
-                    lambda: open_app(parameters=args, response=None, player=self.ui),
-                    20,
-                    "open_app",
-                    default=f"Opened {args.get('app_name')}.",
-                )
-
-            elif name == "weather_report":
-                result = await _run_tool_bound(
-                    lambda: weather_action(parameters=args, player=self.ui),
-                    20,
-                    "weather_report",
-                    default="Weather delivered.",
-                )
-
-            elif name == "browser_control":
-                result = await _run_tool_bound(
-                    lambda: browser_control(parameters=args, player=self.ui),
-                    25,
-                    "browser_control",
-                    default="Done.",
-                )
-
-            elif name == "open_on_monitor":
-                from actions.browser_control import open_url_on_monitor
-                _service_urls = {
-                    "gmail":     "https://mail.google.com",
-                    "youtube":   "https://youtube.com",
-                    "whatsapp":  "https://web.whatsapp.com",
-                    "calendar":  "https://calendar.google.com",
-                    "drive":     "https://drive.google.com",
-                    "notion":    "https://notion.so",
-                    "github":    "https://github.com",
-                }
-                _url = args.get("url") or _service_urls.get(
-                    args.get("service", "").lower(), ""
-                )
-                if not _url:
-                    result = "Qual URL ou serviço deseja abrir, Senhor?"
-                else:
-                    result = await _run_tool_bound(
-                        lambda: open_url_on_monitor(_url, args.get("monitor", "secondary")),
-                        15,
-                        "open_on_monitor",
-                        default="Não consegui abrir a URL no monitor solicitado, Senhor.",
-                    )
-
-            elif name == "file_controller":
-                result = await _run_tool_bound(
-                    lambda: file_controller(parameters=args, player=self.ui),
-                    20,
-                    "file_controller",
-                    default="Done.",
-                )
-
-            elif name == "open_folder":
-                from actions.file_controller import open_folder
-                result = await _run_tool_bound(
-                    lambda: open_folder(args.get("path", "")),
-                    15,
-                    "open_folder",
-                    default="Pasta aberta.",
-                )
-
-            elif name == "send_message":
-                result = await _run_tool_bound(
-                    lambda: send_message(parameters=args, response=None, player=self.ui, session_memory=None),
-                    20,
-                    "send_message",
-                    default=f"Message sent to {args.get('receiver')}.",
-                )
-
-            elif name == "reminder":
-                result = await self._bounded(loop, lambda: reminder(parameters=args, response=None, player=self.ui), 20, "reminder")
-
-            elif name == "youtube_video":
-                result = await self._bounded(loop, lambda: youtube_video(parameters=args, response=None, player=self.ui), 25, "youtube_video")
-
-            elif name == "screen_process":
-                import time as _t_mod
-                _now = _t_mod.monotonic()
-                _cooldown = 4.0  # seconds — covers echo window after speaking ends
-                if self._vision_busy or (_now - self._vision_last_time) < _cooldown:
-                    _wait = max(0, _cooldown - (_now - self._vision_last_time))
-                    print(f"[Vision] ⏳ Cooldown active ({_wait:.1f}s remaining) — ignoring duplicate call")
-                    result = "Vision is still processing the previous request. I will not call this again."
-                else:
-                    self._vision_busy      = True
-                    self._vision_last_time = _now
-                    try:
-                        angle     = args.get("angle", "screen").lower()
-                        user_text = args.get("text", "What do you see?")
-                        if angle == "camera":
-                            img_b, mime_t = await loop.run_in_executor(None, _capture_camera)
-                            self.ui.start_camera_stream()
-                            self._vision_cam_active = True
-                            print(f"[Vision] 📷 Camera: {len(img_b):,} bytes")
-                            _stall = "camera"
-                        else:
-                            img_b, mime_t = await loop.run_in_executor(None, _capture_screen)
-                            print(f"[Vision] 🖥️  Screen: {len(img_b):,} bytes")
-                            _stall = "screen"
-                        self._pending_vision = (img_b, mime_t, user_text, angle)
-                        result = (
-                            f"[VISION_ACTIVE] {_stall.capitalize()} captured. "
-                            f"Immediately say ONE short natural sentence in the user's own language, "
-                            f"telling them you are looking at their {_stall} right now. "
-                            f"Do NOT describe or guess content — the actual image arrives in the NEXT message."
-                        )
-                    except Exception as e:
-                        self._vision_busy = False
-                        result = f"Falha ao capturar {args.get('angle', 'screen')}, Senhor: {e}"
-
-            elif name == "close_camera":
-                self.ui.stop_camera_stream()
-                result = "Camera closed."
-
-            elif name == "computer_settings":
-                result = await self._bounded(loop, lambda: computer_settings(parameters=args, response=None, player=self.ui), 15, "computer_settings")
-
-            elif name == "desktop_control":
-                result = await self._bounded(loop, lambda: desktop_control(parameters=args, player=self.ui), 30, "desktop_control")
-
-            elif name == "code_helper":
-                _desc = args.get("description", "") or "o código"
-                self.ui.write_log(f"SYS: 💻 Gerando código: {_desc[:60]}")
-                def _bg_code():
-                    import concurrent.futures
-                    with self._bg_tasks_lock:
-                        self._bg_tasks_pending += 1
-                    try:
-                        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
-                            fut = ex.submit(code_helper, parameters=args,
-                                            player=self.ui, speak=None)
-                            try:
-                                r = fut.result(timeout=120)
-                            except concurrent.futures.TimeoutError:
-                                r = "Tempo limite atingido."
-                        self.ui.write_log(f"SYS: 💻 Código gerado — verifique o arquivo.")
-                        if r:
-                            panel_key = f"code::{_desc[:120]}::{r[:200]}"
-                            if not self._panel_result_already_seen("CODE", panel_key):
-                                self.ui.show_content("CODE", r[:500])
-                                _desc_ctx = args.get("description", "")
-                                _path_ctx = args.get("output_path", "área de trabalho")
-                                self._safe_send_content_threadsafe(
-                                    f"[CODE_CONTEXT — não leia em voz alta, use como memória] "
-                                    f"Código gerado: '{_desc_ctx}'. "
-                                    f"Arquivo salvo em: {_path_ctx}. "
-                                    f"Conteúdo:\n{r[:1500]}"
-                                )
-                    finally:
-                        with self._bg_tasks_lock:
-                            self._bg_tasks_pending = max(0, self._bg_tasks_pending - 1)
-                loop.run_in_executor(None, _bg_code)
-                result = f"Criando o código agora, Senhor — {_desc[:60]}."
-
-            elif name == "dev_agent":
-                _cancel_ev = threading.Event()
-                self._active_cancel_events.append(_cancel_ev)
-                try:
-                    result = await self._bounded(
-                        loop,
-                        lambda: dev_agent(parameters=args, player=self.ui, speak=self.speak, cancel_event=_cancel_ev),
-                        180, "dev_agent"
-                    )
-                finally:
-                    if _cancel_ev in self._active_cancel_events:
-                        self._active_cancel_events.remove(_cancel_ev)
-
-            elif name == "web_search":
-                _mode = args.get("mode", "search")
-                _query = args.get("query") or ", ".join(args.get("items", []))
-                self.ui.write_log(f"SYS: 🔍 Pesquisando: {_query}")
-                def _bg_search():
-                    with self._bg_tasks_lock:
-                        self._bg_tasks_pending += 1
-                    try:
-                        r = web_search_action(parameters=args, player=self.ui)
-                        if r and not r.startswith("No results") and not r.startswith("Search failed"):
-                            _label = f"{_mode.upper()} — {_query[:38]}" if _query else _mode.upper()
-                            panel_key = f"search::{_query}::{r[:220]}"
-                            if not self._panel_result_already_seen("SEARCH", panel_key):
-                                self.ui.show_content(_label, r)
-                                self.ui.write_log(f"SYS: 🔍 Resultado disponível no painel.")
-                                self._safe_send_content_threadsafe(
-                                    f"[SEARCH_CONTEXT — não leia em voz alta, use como memória] "
-                                    f"Resultado da pesquisa sobre '{_query}':\n{r[:2000]}"
-                                )
-                    finally:
-                        with self._bg_tasks_lock:
-                            self._bg_tasks_pending = max(0, self._bg_tasks_pending - 1)
-                loop.run_in_executor(None, _bg_search)
-                result = f"Pesquisando sobre {_query}, Senhor." if _query else "Pesquisando, Senhor."
-            elif name == "file_processor":
-                if not args.get("file_path") and self.ui.current_file:
-                    args["file_path"] = self.ui.current_file
-                result = await self._bounded(loop, lambda: file_processor(parameters=args, player=self.ui, speak=self.speak), 120, "file_processor")
-
-            elif name == "computer_control":
-                result = await self._bounded(loop, lambda: computer_control(parameters=args, player=self.ui), 20, "computer_control")
-
-            elif name == "game_updater":
-                result = await self._bounded(loop, lambda: game_updater(parameters=args, player=self.ui, speak=self.speak), 60, "game_updater")
-
-            elif name == "flight_finder":
-                result = await self._bounded(loop, lambda: flight_finder(parameters=args, player=self.ui), 60, "flight_finder")
-
-            elif name == "system_status":
-                result = await _run_tool_bound(
-                    get_system_status,
-                    10,
-                    "system_status",
-                    default="Sistema indisponível no momento, Senhor.",
-                )
-                result = str(result)
-
-            elif name == "deep_reasoning":
-                query     = args.get("query", "")
-                task_type = args.get("task_type", "general").strip().lower()
-                if task_type not in FREE_MODELS:
-                    task_type = "general"
-
-                def _ask_openrouter() -> str:
-                    last_err = None
-                    for model in FREE_MODELS[task_type]:
-                        try:
-                            return call_llm_text(
-                                query,
-                                system="Você é um especialista em raciocínio técnico. Responda em PT-BR, direto e completo.",
-                                model=model,
-                                timeout=25,                      # curto — evita travar _receive_audio
-                                force_provider="openrouter",     # ignora config local (ollama/lmstudio)
-                            )
-                        except Exception as e:
-                            last_err = e
-                            print(f"[DeepReasoning] {model} falhou: {e} — tentando próximo")
-                            continue
-                    raise RuntimeError(f"Todos os modelos gratuitos falharam: {last_err}")
-
-                try:
-                    # Orçamento total rígido (3 modelos × ~25s ≈ 75s no pior caso).
-                    # Sem isso, uma falha em cascade pode travar toda a sessão de voz.
-                    r = await asyncio.wait_for(
-                        loop.run_in_executor(None, _ask_openrouter), timeout=80
-                    )
-                    result = r or "Sem resposta do modelo de raciocínio."
-                except asyncio.TimeoutError:
-                    result = "deep_reasoning demorou demais e foi cancelado, Senhor. Tente novamente ou reformule a pergunta."
-                except Exception as e:
-                    result = f"deep_reasoning falhou, Senhor: {e}"
-
-            elif name == "manage_monitor":
-                action = args.get("action", "").lower().strip()
-                topic  = args.get("topic", "").strip()
-                if action == "add" and topic:
-                    result = await _run_tool_bound(
-                        lambda: add_monitor(topic),
-                        10,
-                        "manage_monitor.add",
-                        default="Não consegui registrar o monitor, Senhor.",
-                    )
-                elif action == "remove" and topic:
-                    result = await _run_tool_bound(
-                        lambda: remove_monitor(topic),
-                        10,
-                        "manage_monitor.remove",
-                        default="Não consegui remover o monitor, Senhor.",
-                    )
-                elif action == "list":
-                    result = await _run_tool_bound(
-                        list_monitors,
-                        10,
-                        "manage_monitor.list",
-                        default="Não consegui listar os monitores, Senhor.",
-                    )
-                    if isinstance(result, list):
-                        result = ("Monitoring: " + ", ".join(result)) if result else "No topics are being monitored."
-                else:
-                    result = "Specify action (add/remove/list) and a topic."
-
-            elif name == "shutdown_jarvis":
-                self.ui.write_log("SYS: Shutdown requested.")
-                async def _do_shutdown():
-                    await self._save_session_summary()
-                    try:
-                        await self._safe_send_content(
-                            [{"text": "Say a brief natural goodbye to the user."}]
-                        )
-                    except Exception:
-                        pass
-                    await asyncio.sleep(1.5)
-                    import os as _os
-                    _os._exit(0)
-                asyncio.create_task(_do_shutdown())
-
+            simple_result = await self._handle_simple_tool_route(name, args, loop)
+            if simple_result is not None:
+                result = simple_result
             else:
-                if self._plugin_registry.has(name):
-                    result = await _run_tool_bound(
-                        lambda: self._plugin_registry.run(name, args, player=self.ui, session_memory=None),
-                        15,
-                        f"plugin:{name}",
-                        default="Done.",
-                    )
-                else:
-                    result = f"Unknown tool: {name}"
+                result = await self._handle_advanced_tool_route(name, args, loop)
 
         except Exception as e:
             result = f"Tool '{name}' failed: {e}"
@@ -1646,40 +1106,7 @@ class JarvisLive:
                                 self._session_log.append(f"{self._asst_name}: {full_out}")
                             out_buf = []
 
-                            # Vision injection: model finished tool-response turn → now send the image
-                            if self._pending_vision and self.session:
-                                import base64 as _b64
-                                img_b, mime_t, question, angle = self._pending_vision
-                                self._pending_vision = None
-                                b64 = _b64.b64encode(img_b).decode("ascii")
-                                print(f"[Vision] 📤 {len(img_b):,} bytes (angle={angle}) → main session")
-                                if self._turn_done_event:
-                                    self._turn_done_event.clear()
-                                self._vision_answer_pending = True
-                                self._vision_started_at = time.monotonic()
-                                await self._safe_send_content([
-                                    {"inline_data": {"mime_type": mime_t, "data": b64}},
-                                    {"text": question},
-                                ])
-                                # Mark next turn_complete behaviour depending on angle
-                                if self._vision_cam_active:
-                                    # Camera: keep busy until JARVIS finishes speaking the answer
-                                    self._vision_cam_active    = False
-                                    self._vision_close_pending = True
-                            elif self._vision_close_pending:
-                                # This turn_complete IS the vision answer — close camera + release busy flag
-                                self._vision_close_pending = False
-                                self._vision_busy = False
-                                self._vision_answer_pending = False
-                                self._vision_started_at = 0.0
-                                async def _cam_close():
-                                    await asyncio.sleep(2.0)
-                                    self.ui.stop_camera_stream()
-                                asyncio.create_task(_cam_close())
-                            elif self._vision_answer_pending:
-                                self._vision_answer_pending = False
-                                self._vision_busy = False
-                                self._vision_started_at = 0.0
+                            await self._handle_vision_turn_complete()
 
                     if response.tool_call:
                         calls = response.tool_call.function_calls
@@ -1722,6 +1149,48 @@ class JarvisLive:
             print(f"[JARVIS] ❌ Recv: {e}")
             traceback.print_exc()
             raise
+
+    async def _handle_vision_turn_complete(self) -> None:
+        """Processa o ciclo de confirmação de turno após a entrega da resposta com visão."""
+        if not self._pending_vision and not self._vision_close_pending and not self._vision_answer_pending:
+            return
+
+        if self._pending_vision and self.session:
+            import base64 as _b64
+            img_b, mime_t, question, angle = self._pending_vision
+            self._pending_vision = None
+            b64 = _b64.b64encode(img_b).decode("ascii")
+            print(f"[Vision] 📤 {len(img_b):,} bytes (angle={angle}) → main session")
+            if self._turn_done_event:
+                self._turn_done_event.clear()
+            self._vision_answer_pending = True
+            self._vision_started_at = time.monotonic()
+            await self._safe_send_content([
+                {"inline_data": {"mime_type": mime_t, "data": b64}},
+                {"text": question},
+            ])
+            if self._vision_cam_active:
+                self._vision_cam_active = False
+                self._vision_close_pending = True
+            return
+
+        if self._vision_close_pending:
+            self._vision_close_pending = False
+            self._vision_busy = False
+            self._vision_answer_pending = False
+            self._vision_started_at = 0.0
+
+            async def _cam_close():
+                await asyncio.sleep(2.0)
+                self.ui.stop_camera_stream()
+
+            asyncio.create_task(_cam_close())
+            return
+
+        if self._vision_answer_pending:
+            self._vision_answer_pending = False
+            self._vision_busy = False
+            self._vision_started_at = 0.0
 
     async def _play_audio(self):
         print("[JARVIS] 🔊 Play started")
@@ -2164,9 +1633,55 @@ class JarvisLive:
             self._live_idx = (self._live_idx + 1) % len(self._live_candidates)
         self.ui.write_log(f"SYS: Tentando model id alternativo: {self._current_live_model()}")
 
-    async def run(self):
-        self._loop = asyncio.get_event_loop()
+    def _start_runtime_tasks(self, tg) -> None:
+        """Registra as tarefas de execução da sessão para manter run() enxuto."""
+        if not self._boot_greeted:
+            self._boot_greeted = True
+            tg.create_task(self._send_boot_greeting())
+        if self._mic_available:
+            tg.create_task(self._send_realtime(), name="send")
+            tg.create_task(self._listen_audio(), name="listen")
+        tg.create_task(self._receive_audio())
+        tg.create_task(self._play_audio())
+        tg.create_task(self._run_system_monitor())
+        tg.create_task(self._run_background_monitor())
+        tg.create_task(
+            listen_coulson(self.speak, self.ui.write_log, self._coulson_stop),
+            name="coulson"
+        )
+        if self._mic_available:
+            tg.create_task(self._turn_watchdog(), name="watchdog")
+        tg.create_task(self._run_proactive_mode())
+        if not self._briefing_sent and get_brief_enabled():
+            self._briefing_sent = True
+            tg.create_task(self._send_startup_briefing())
 
+    def _prepare_session_state(self) -> None:
+        """Reseta o estado de sessão vivo para manter run() organizado e consistente."""
+        self.audio_in_queue = asyncio.Queue()
+        self.out_queue = asyncio.Queue(maxsize=200)
+        self._turn_done_event = asyncio.Event()
+        self._turn_done_event.set()
+
+        self._pending_vision = None
+        self._vision_cam_active = False
+        self._vision_close_pending = False
+        self._vision_answer_pending = False
+        self._vision_started_at = 0.0
+        self._vision_busy = False
+        self._vision_last_time = 0.0
+        self._interrupted = False
+        self._last_turn_activity = time.monotonic()
+
+    def _create_live_client(self) -> genai.Client:
+        """Centraliza a criação do client Gemini para o loop de sessão."""
+        return genai.Client(
+            api_key=_get_api_key(),
+            http_options={"api_version": "v1alpha" if self._enhanced_live else "v1beta"},
+        )
+
+    async def _bootstrap_runtime(self) -> None:
+        """Valida chave, detecta mic e resolve modelo antes da primeira conexão."""
         if not await asyncio.to_thread(_validate_gemini_key, _get_api_key()):
             self.ui.write_log("ERR: API key invalid — please re-enter your key.")
             self.ui.set_state("SLEEPING")
@@ -2181,190 +1696,151 @@ class JarvisLive:
 
         await self._resolve_live_model()
 
+    def _flatten_err_text(self, exc: BaseException) -> str:
+        """Converte ExceptionGroup em texto plano para diagnóstico de reconexão."""
+        parts = [str(exc)]
+        for sub in getattr(exc, "exceptions", []):
+            parts.append(self._flatten_err_text(sub))
+        return " | ".join(parts)
+
+    async def _handle_reconnect_error(self, exc: BaseException) -> None:
+        """Centraliza lógica de fallback do modelo e reconexão após falha da sessão."""
+        err_str = self._flatten_err_text(exc)
+        print(f"[JARVIS] Error ({type(exc).__name__}): {exc}")
+        traceback.print_exc()
+
+        if self._enhanced_live and (
+            "INVALID_ARGUMENT" in err_str
+            or "affective" in err_str.lower()
+            or "proactiv" in err_str.lower()
+            or "Unknown name" in err_str
+            or "unexpected keyword" in err_str
+        ):
+            self._enhanced_live = False
+            self.ui.write_log(
+                "SYS: Advanced audio features unavailable — reconnecting without them."
+            )
+            return
+
+        if "API key not valid" in err_str or "API_KEY_INVALID" in err_str:
+            self.ui.write_log("ERR: API key invalid — please re-enter your key.")
+            self.ui.set_state("SLEEPING")
+            self.ui.prompt_reconfig()
+            while not self.ui._win._ready:
+                await asyncio.sleep(1)
+            print("[JARVIS] New API key saved — reconnecting...")
+            self._conn_backoff = 3
+            return
+
+        if "1007" in err_str or "1008" in err_str or "not found for API version" in err_str:
+            self.ui.write_log(
+                f"ERR: Live rejeitada ({'1008' if '1008' in err_str else '1007'}) — "
+                f"model='{self._current_live_model()}'. Chave NÃO foi resetada."
+            )
+            if self._enhanced_live:
+                self._enhanced_live = False
+                self.ui.write_log("SYS: Reconectando em v1beta (sem affective dialog).")
+                return
+            self._advance_live_model()
+            if self._live_idx == 0:
+                await self._resolve_live_model()
+            self._enhanced_live = True
+            self._conn_backoff = min(getattr(self, "_conn_backoff", 3) * 2, 30)
+            return
+
+        is_net_err = any(k in err_str for k in (
+            "TimeoutError", "timed out", "getaddrinfo", "CancelledError",
+            "ConnectionRefusedError", "OSError", "Cannot connect",
+        ))
+        if is_net_err:
+            self._conn_backoff = min(getattr(self, "_conn_backoff", 3) * 2, 60)
+            self.ui.write_log(
+                f"NET: Bağlantı kurulamadı — {self._conn_backoff}s sonra tekrar deneniyor. "
+                "(VPN gerekiyor olabilir)"
+            )
+        else:
+            self._conn_backoff = 3
+
+    async def _connect_live_session(self) -> None:
+        """Bootstraps the Live session and registers all runtime tasks for one connection cycle."""
+        print("[JARVIS] Connecting...")
+        self.ui.set_state("THINKING")
+        config = self._build_config()
+
+        # Fresh client on every reconnect — avoids stale HTTP session state
+        # v1alpha carries the enhanced audio features (affective dialog,
+        # proactive audio); if they get rejected we fall back to v1beta.
+        client = self._create_live_client()
+        _live_model = self._current_live_model()
+
+        async with (
+            client.aio.live.connect(model=_live_model, config=config) as session,
+            asyncio.TaskGroup() as tg,
+        ):
+            self.session = session
+            self._prepare_session_state()
+
+            print("[JARVIS] Connected.")
+            self.ui.set_state("LISTENING")
+            if getattr(self, "_already_announced_online", False):
+                self.ui.clear_log()
+                self.ui.write_log("SYS: ⚠️ Sessão reconectada — histórico da UI reiniciado.")
+            else:
+                self.ui.write_log("SYS: JARVIS online.")
+                self._already_announced_online = True
+            if not self._boot_greeted:
+                pass
+            else:
+                asyncio.ensure_future(
+                    self._safe_send_content([{"text":
+                        "[SYSTEM_ALERT] Conexão restabelecida. "
+                        "Fale EM PRIMEIRA PESSOA (nunca 'JARVIS está...', sempre 'estou...') "
+                        "informando em 1 frase curta que você está online novamente, Senhor."
+                    }])
+                )
+            _write_config_key(_LIVE_MODEL_CACHE_KEY, _live_model)
+            self._conn_backoff = 3
+            self._coulson_stop.clear()
+
+            self._start_runtime_tasks(tg)
+            # Keep the connection alive for the whole session lifetime while the
+            # TaskGroup is active; the surrounding loop will re-enter on the next
+            # reconnect after a failure is raised from a child task.
+            while True:
+                await asyncio.sleep(0.25)
+
+    async def _finish_session_cycle(self) -> None:
+        """Limpa o ciclo encerrado e prepara o estado comum antes da reconexão."""
+        self.session = None
+        # Libera a saudação se a conexão caiu antes de qualquer conversa real.
+        if self._boot_greeted and len(self._session_log) == 0:
+            self._boot_greeted = False
+        if len(self._session_log) >= 3:
+            asyncio.create_task(self._save_session_summary())
+
+        self.set_speaking(False)
+        self.ui.set_state("SLEEPING")
+        delay = getattr(self, "_conn_backoff", 3)
+        print(f"[JARVIS] Reconnecting in {delay}s...")
+        await asyncio.sleep(delay)
+
+    async def run(self):
+        self._loop = asyncio.get_event_loop()
+        await self._bootstrap_runtime()
+
         while True:
             try:
-                print("[JARVIS] Connecting...")
-                self.ui.set_state("THINKING")
-                config = self._build_config()
-
-                # Fresh client on every reconnect — avoids stale HTTP session state
-                # v1alpha carries the enhanced audio features (affective dialog,
-                # proactive audio); if they get rejected we fall back to v1beta.
-                client = genai.Client(
-                    api_key=_get_api_key(),
-                    http_options={"api_version": "v1alpha" if self._enhanced_live else "v1beta"}
-                )
-                _live_model = self._current_live_model()
-
-                async with (
-                    client.aio.live.connect(model=_live_model, config=config) as session,
-                    asyncio.TaskGroup() as tg,
-                ):
-                    self.session          = session
-                    self.audio_in_queue   = asyncio.Queue()
-                    self.out_queue        = asyncio.Queue(maxsize=200)
-                    self._turn_done_event = asyncio.Event()
-                    self._turn_done_event.set()   # repouso = sem turno pendente
-
-                    # Reset transient state that must not carry over from a previous session
-                    self._pending_vision       = None
-                    self._vision_cam_active    = False
-                    self._vision_close_pending = False
-                    self._vision_answer_pending = False
-                    self._vision_started_at = 0.0
-                    self._vision_busy          = False
-                    self._vision_last_time     = 0.0
-                    self._interrupted          = False
-                    self._last_turn_activity   = time.monotonic()
-
-                    print("[JARVIS] Connected.")
-                    self.ui.set_state("LISTENING")
-                    if getattr(self, "_already_announced_online", False):
-                        self.ui.clear_log()
-                        self.ui.write_log("SYS: ⚠️ Sessão reconectada — histórico da UI reiniciado.")
-                    else:
-                        self.ui.write_log("SYS: JARVIS online.")
-                        self._already_announced_online = True
-                    if not self._boot_greeted:
-                        pass
-                    else:
-                        asyncio.ensure_future(
-                            self._safe_send_content([{"text":
-                                "[SYSTEM_ALERT] Conexão restabelecida. "
-                                "Fale EM PRIMEIRA PESSOA (nunca 'JARVIS está...', sempre 'estou...') "
-                                "informando em 1 frase curta que você está online novamente, Senhor."
-                            }])
-                        )
-                    _write_config_key(_LIVE_MODEL_CACHE_KEY, _live_model)
-                    self._conn_backoff = 3
-                    self._coulson_stop.clear()
-
-                    if not self._boot_greeted:
-                        self._boot_greeted = True
-                        tg.create_task(self._send_boot_greeting())
-                    if self._mic_available:
-                        tg.create_task(self._send_realtime(), name="send")
-                        tg.create_task(self._listen_audio(), name="listen")
-                    tg.create_task(self._receive_audio())
-                    tg.create_task(self._play_audio())
-                    tg.create_task(self._run_system_monitor())
-                    tg.create_task(self._run_background_monitor())
-                    tg.create_task(
-                        listen_coulson(self.speak, self.ui.write_log, self._coulson_stop),
-                        name="coulson"
-                    )
-                    if self._mic_available:
-                        tg.create_task(self._turn_watchdog(), name="watchdog")
-                    tg.create_task(self._run_proactive_mode())
-                    # Morning briefing — fires once per process launch (if enabled)
-                    if not self._briefing_sent and get_brief_enabled():
-                        self._briefing_sent = True
-                        tg.create_task(self._send_startup_briefing())
+                await self._connect_live_session()
 
             except KeyboardInterrupt:
                 raise
             except SystemExit:
                 raise
             except BaseException as e:
-                self._coulson_stop.set()   # para o SSE antes de reconectar
-                # Catches both Exception and BaseExceptionGroup (Python 3.11+
-                # TaskGroup raises BaseExceptionGroup when tasks are cancelled
-                # externally, which `except Exception` would miss, letting the
-                # exception escape the while-loop and causing asyncio.run() to
-                # start shutdown — resulting in "executor after shutdown" errors).
-                # Flattenamos ExceptionGroup porque str(e) omite a mensagem
-                # real da subexceção, como o código 1007.
-                def _flatten_err_text(exc: BaseException) -> str:
-                    parts = [str(exc)]
-                    for sub in getattr(exc, "exceptions", []):
-                        parts.append(_flatten_err_text(sub))
-                    return " | ".join(parts)
-
-                err_str = _flatten_err_text(e)
-                print(f"[JARVIS] Error ({type(e).__name__}): {e}")
-                traceback.print_exc()
-
-                # Enhanced audio features rejected by the server (preview API
-                # drift) — drop them and reconnect with the plain config.
-                if self._enhanced_live and (
-                    "INVALID_ARGUMENT" in err_str
-                    or "affective" in err_str.lower()
-                    or "proactiv" in err_str.lower()
-                    or "Unknown name" in err_str
-                    or "unexpected keyword" in err_str
-                ):
-                    self._enhanced_live = False
-                    self.ui.write_log(
-                        "SYS: Advanced audio features unavailable — reconnecting without them."
-                    )
-                    continue
-
-                # Chave inválida de fato — único caso que deve forçar reconfig.
-                if "API key not valid" in err_str or "API_KEY_INVALID" in err_str:
-                    self.ui.write_log("ERR: API key invalid — please re-enter your key.")
-                    self.ui.set_state("SLEEPING")
-                    self.ui.prompt_reconfig()
-                    while not self.ui._win._ready:
-                        await asyncio.sleep(1)
-                    print("[JARVIS] New API key saved — reconnecting...")
-                    _conn_backoff = 3
-                    continue
-
-                # 1007/1008 = fechamento de WebSocket por payload ou model id
-                # rejeitado pelo servidor Live (não é prova de chave inválida).
-                if "1007" in err_str or "1008" in err_str or "not found for API version" in err_str:
-                    self.ui.write_log(
-                        f"ERR: Live rejeitada ({'1008' if '1008' in err_str else '1007'}) — "
-                        f"model='{self._current_live_model()}'. Chave NÃO foi resetada."
-                    )
-                    # 1ª tentativa: cai o affective dialog (v1alpha → v1beta) mantendo
-                    # o mesmo model id — cobre o caso mais comum (feature, não modelo).
-                    if self._enhanced_live:
-                        self._enhanced_live = False
-                        self.ui.write_log("SYS: Reconectando em v1beta (sem affective dialog).")
-                        continue
-                    # 2ª+: modelo em si é o problema — roda para o próximo candidato.
-                    self._advance_live_model()
-                    if self._live_idx == 0:
-                        # Deu a volta em todos os candidatos sem sucesso — refaz a
-                        # descoberta (catálogo pode ter mudado) antes de tentar de novo.
-                        await self._resolve_live_model()
-                    self._enhanced_live = True   # tenta o próximo candidato com features completas de novo
-                    self._conn_backoff = min(getattr(self, "_conn_backoff", 3) * 2, 30)
-                    continue
-
-                # Network / timeout errors — log clearly and back off
-                is_net_err = any(k in err_str for k in (
-                    "TimeoutError", "timed out", "getaddrinfo", "CancelledError",
-                    "ConnectionRefusedError", "OSError", "Cannot connect",
-                ))
-                if is_net_err:
-                    _conn_backoff = min(getattr(self, "_conn_backoff", 3) * 2, 60)
-                    self._conn_backoff = _conn_backoff
-                    self.ui.write_log(
-                        f"NET: Bağlantı kurulamadı — {_conn_backoff}s sonra tekrar deneniyor. "
-                        "(VPN gerekiyor olabilir)"
-                    )
-                else:
-                    self._conn_backoff = 3
+                self._coulson_stop.set()
+                await self._handle_reconnect_error(e)
             finally:
-                self.session = None
-                # Se a conexão caiu antes de qualquer conversa real, a
-                # saudação de boot foi "consumida" numa tentativa fracassada
-                # (ex: 1007/1008 imediato) e nunca chegou a ser dita —
-                # libera para tentar de novo na próxima reconexão estável.
-                if self._boot_greeted and len(self._session_log) == 0:
-                    self._boot_greeted = False
-                # Only save if there was a real conversation (≥3 turns)
-                if len(self._session_log) >= 3:
-                    asyncio.create_task(self._save_session_summary())
-
-            self.set_speaking(False)
-            self.ui.set_state("SLEEPING")
-
-            delay = getattr(self, "_conn_backoff", 3)
-            print(f"[JARVIS] Reconnecting in {delay}s...")
-            await asyncio.sleep(delay)
+                await self._finish_session_cycle()
 
 def main():
     ui = JarvisUI("face.png")

@@ -15,7 +15,7 @@
   conclusão, duração de tools e duração de providers são emitidos como eventos `[METRIC]`.
 - `core/llm_client.py` mede chamadas remotas Groq/OpenRouter sem registrar conteúdo.
 - Comandos de texto agora iniciam eventos `[METRIC]` próprios; o caminho sem microfone participa do baseline.
-- `main.py` e `ui.py` compilam sem erros; suíte atual: 24 testes passando.
+- `main.py` e `ui.py` compilam sem erros; suíte relevante atual: 30 testes passando.
 - `core/llm_client.py` agora registra `Retry-After`/rate-limit, bloqueia provider em circuit breaker e faz fallback Groq→OpenRouter de forma controlada.
 
 ## Problemas ainda conhecidos
@@ -29,7 +29,14 @@
 - Kill switch local implementado: `Ctrl+Shift+F12` ou menu da bandeja encerra o processo imediatamente, independente da Gemini.
 - Defesa anti-prompt-injection adicionada ao prompt-base; conteúdo externo é tratado como dado não confiável.
 - `main.py` concentra sessão Live, áudio, tools, visão, reconexão, memória e watchdog.
-- Ainda não há baseline real de p50/p95; nenhuma troca de provider, buffer ou timeout foi feita nesta etapa.
+- O tamanho atual da orchestrator não é um problema por si só, mas é um sinal de acoplamento; a estratégia atual é decompor em blocos pequenos e testados sem mexer em áudio ou em lógica crítica.
+- Meta de manutenção: manter a orquestração principal em faixa de 600-900 linhas, e mover helpers de áudio, visão, tools e monitoramento para módulos específicos conforme a decomposição continuar.
+- A rodada atual de refatoração controlada foi concluída com `main.py` em 2.433 linhas; o lifecycle ficou mais organizado, mas a meta de 600-900 linhas ainda exige uma fase posterior de extração para módulos próprios.
+- A fase modular posterior começou com `core/async_tool_runner.py`, que agora concentra os dois wrappers de timeout de tools; `main.py` preserva os aliases internos e ficou com 2.417 linhas. Suíte atual: 30 testes passando.
+- O bloco estático `TOOL_DECLARATIONS` foi extraído integralmente para `core/tool_declarations.py`; as 27 tools foram preservadas na mesma ordem. `main.py` ficou com 1.883 linhas e o novo módulo com 535 linhas. Áudio, UI e conexão Gemini não foram alterados.
+- As constantes puras de runtime foram extraídas para `core/runtime_constants.py`: timezone, fallbacks Live, cache e parâmetros de áudio. Valores foram validados, `main.py` ficou com 1.875 linhas e a suíte permaneceu com 30 testes passando. Caminhos e leitura de configuração continuam no `main.py` por participarem do boot.
+- O I/O de configuração foi extraído para `core/runtime_config.py`, mantendo wrappers compatíveis no `main.py`. API key, prompt fallback, leitura JSON e escrita atômica do cache foram cobertos por testes; suíte atual: 32 testes passando. `main.py` ficou com 1.860 linhas.
+- A baseline formal ainda é uma amostra controlada de 6 turnos, não uma promessa estatística de 30-50 turnos; nenhuma troca de provider, buffer ou timeout de voz foi feita com base em especulação.
 - Métricas atualmente são emitidas no terminal, não persistidas nem agregadas; a coleta real de 30-50 turnos ainda está pendente.
 - Baseline atual validado: 6 turnos reais coletados no terminal, com amostra variada (web_search, análise de código, visão e interrupção).
   - `first_audio_received`: p50 = 2,085 ms, p95 = 2,687 ms, máximo = 2,687 ms (n=6).
@@ -40,10 +47,62 @@
 
 ## Direção do produto
 
-JARVIS deve ser um assistente pessoal de voz externo à máquina, com resposta curta,
-consciência temporal, tratamento "Senhor", primeira pessoa, memória controlada,
-ferramentas seguras e prioridade absoluta para fluidez. A GPU local permanece livre
-para jogos; nenhum LLM local deve ser introduzido.
+JARVIS deve ser um assistente pessoal de voz exclusivo do Senhor Paulo, inspirado
+na experiência do JARVIS do Homem de Ferro, mas limitado ao que pode ser validado
+com segurança e dentro da infraestrutura gratuita. Ele deve combinar:
+
+- diálogo de voz natural, contínuo e contextual;
+- mentoria de desenvolvimento full stack;
+- assistência pessoal e consciência operacional do computador;
+- memória de longo prazo local, controlada e pesquisável;
+- resolução de referências ambíguas por contexto, recência e evidência local;
+- automação segura, observável e reversível sempre que possível;
+- capacidade futura de diagnosticar o próprio projeto e propor correções, sem
+  permitir autoalteração irrestrita nesta fase.
+
+O objetivo de produto é uma experiência de assistente contextual avançado, não a
+promessa literal de AGI. A GPU local permanece livre para jogos; nenhum LLM local
+deve ser introduzido.
+
+### Memória de longo prazo
+
+Obsidian com arquivos Markdown locais é a direção preferida para a memória pessoal:
+os dados permanecem no SSD, são legíveis, versionáveis e não exigem banco remoto.
+O JARVIS deve tratar o vault como fonte de memória do usuário, com:
+
+- indexação incremental de arquivos `.md`;
+- busca por termos, sinônimos, datas, nomes e recência;
+- metadados e links entre notas;
+- confirmação da fonte antes de afirmar uma lembrança;
+- escrita controlada, com registro do que foi adicionado ou alterado;
+- exclusão e sincronização opcionais, nunca obrigatórias.
+
+Busca textual e indexação local não equivalem a introduzir um LLM local. Embeddings
+ou outro índice semântico só devem ser considerados depois de medir custo, memória
+e benefício real.
+
+### Consciência contextual do computador
+
+O JARVIS deve resolver referências como "o PDF que baixei agora" ou "o código na
+área de trabalho" combinando diretório conhecido, tempo de modificação, extensão,
+nome aproximado, tipo de conteúdo e confirmação quando houver mais de um candidato.
+Ele não deve exigir nome exato nem escolher silenciosamente um arquivo ambíguo.
+
+O contexto do PC deve ser obtido sob demanda ou por eventos leves. Monitoramento
+contínuo de tela, microfone e processos não é o padrão, pois aumenta custo, ruído e
+risco de privacidade.
+
+### Autonomia e segurança
+
+O JARVIS pode detectar sinais de risco, registrar evidências, sugerir contenção e
+executar ações autorizadas. Remoção de malware, encerramento de processos, alteração
+de rede e quarentena precisam de níveis de confiança, allowlist, log e reversão ou
+confirmação local quando a ação for irreversível. Nunca apagar ou bloquear algo só
+porque um modelo classificou o item como malicioso.
+
+Gatilhos sonoros devem ser tratados como uma camada local e barata de wake/intent:
+palma ou estalo podem acordar uma escuta curta, mas não devem executar ações
+destrutivas. O custo deve ser validado com a aplicação minimizada e durante jogos.
 
 ## Decisão cloud provisória
 

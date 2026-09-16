@@ -39,13 +39,65 @@
 4. Fortalecer Groq-first, fallback OpenRouter, quotas, `Retry-After` e circuit breaker.
    - Status atual: concluído com `ProviderRequestError`, cooldown e circuit breaker em `core/llm_client.py`.
 5. Reduzir reinjeções de contexto de background tools quando o painel já tem o resultado.
+   - Status atual: concluído com deduplicação de `web_search` e `code_helper`, coberta por regressão.
 6. Medir backlog/underrun e só então ajustar buffer/lote de áudio.
+   - Status atual: concluído como diagnóstico; nenhum ajuste de buffer foi autorizado ou aplicado.
 7. Revisar confirmações locais para ações destrutivas.
+   - Status atual: concluído com confirmação explícita em `file_controller.py` e regressão validada.
 8. Só depois refatorar módulos grandes de `main.py` em fatias testáveis.
+   - Status atual: rodada atual concluída; extrações de lifecycle, runtime, visão, tools, painel e background foram validadas. `main.py` permanece com 2.433 linhas, portanto a meta de 600-900 linhas não foi declarada como atingida.
+
+## Norte de produto após a fila atual
+
+Depois de estabilizar a orchestrator, a evolução deve seguir esta ordem, sem tentar
+implementar tudo de uma vez:
+
+9. Memória local Obsidian
+   - Definir diretório do vault, contrato de frontmatter, permissões e formato de
+     citações de origem.
+   - Criar indexação incremental e busca textual antes de qualquer busca semântica.
+   - Validar lembranças por recência, fonte e desambiguação.
+
+10. Resolver contextual de arquivos e estado do PC
+   - Priorizar Downloads, Desktop, janela ativa, navegador e mídia.
+   - Ranking por recência, nome aproximado, extensão e conteúdo.
+   - Pedir confirmação somente quando houver candidatos próximos ou ação sensível.
+
+11. Mentoria full stack
+   - Adicionar fluxos de leitura de projeto, análise, testes, revisão e patch aprovado.
+   - Manter o Senhor no controle das alterações e preservar logs de execução.
+
+12. Segurança operacional em camadas
+   - Detectar sinais, registrar evidências e propor contenção.
+   - Preferir quarentena e bloqueio reversível à exclusão.
+   - Exigir allowlist/confirmação para ações de alto impacto.
+
+13. Gatilhos sonoros e automação contextual
+   - Implementar palma/estalo com processamento local, debounce e medição de CPU.
+   - Integrar estado de mídia e comandos como pausar vídeo por API nativa quando possível.
+   - Suspender sensores e métricas pesadas quando minimizado ou durante jogos.
+
+14. Autodiagnóstico controlado
+   - Gerar diagnóstico e patch proposto do próprio projeto.
+   - Rodar testes e apresentar diff.
+   - Aplicar somente após aprovação explícita; nenhuma autoalteração irrestrita.
 
 ## Próximo passo ativo
 
-- Aplicar a etapa seguinte da fila: reduzir reinjeções de contexto de background tools quando o painel já exibe o resultado final, mantendo o mesmo critério de uma mudança por vez.
+- Continuar a refatoração controlada de `main.py` em blocos pequenos, com regressão
+   após cada extração e sem tocar no caminho principal de áudio.
+- Blocos já extraídos: painel/contexto, tarefas em background, visão, rotas de tools,
+   tarefas de runtime, reconexão, setup de sessão e bootstrap do cliente Live.
+- A fase modular começou com `core/async_tool_runner.py`, que recebeu os wrappers
+   de timeout de tools. A próxima redução deve mover outra fronteira coesa para
+   módulo próprio, sempre com teste específico e sem tocar primeiro no áudio Live.
+- O bloco grande `TOOL_DECLARATIONS` foi extraído para `core/tool_declarations.py`;
+   27 tools preservadas, import de `main.py` validado e suíte completa verde.
+- As constantes puras de runtime foram extraídas para `core/runtime_constants.py`;
+   valores preservados e suíte completa verde. Caminhos, API key e leitura de prompt
+   continuam no `main.py` por estarem ligados ao boot.
+- O I/O de configuração foi extraído para `core/runtime_config.py`; wrappers do
+   `main.py` preservados, 2 testes específicos adicionados e suíte completa verde.
 
 ## Restrições permanentes
 
@@ -56,6 +108,12 @@
 - Nenhuma automação de teclado/mouse quando houver API nativa equivalente.
 - Uma mudança por vez, com validação executável antes da próxima.
 - Não reescrever arquivos inteiros durante implementação.
+- A experiência pode ser inspirada no JARVIS ficcional, mas os critérios de aceite
+   devem ser mensuráveis e não podem depender de promessas de AGI.
+- Contexto contínuo de tela, microfone, disco e processos não é permitido por padrão;
+   preferir eventos, consultas sob demanda e escopos mínimos.
+- Ações de segurança destrutivas exigem evidência, log, reversão ou confirmação local.
+- Memória local deve preservar privacidade, origem e controle de escrita do usuário.
 
 ## Critério de aceite da próxima fase
 
