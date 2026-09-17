@@ -7,7 +7,7 @@ estruturados (identity/preferences/etc).
 import re
 from pathlib import Path
 
-OBSIDIAN_VAULT = Path(r"D:\MEMORIA_JARVIS")
+OBSIDIAN_VAULT = Path(r"D:\Memoria_Jarvis")
 
 KNOWLEDGE_DIR = OBSIDIAN_VAULT
 KNOWLEDGE_DIR.mkdir(parents=True, exist_ok=True)
@@ -55,3 +55,49 @@ def search_notes(query: str, max_results: int = 5) -> str:
         if len(hits) >= max_results:
             break
     return "\n".join(hits) if hits else f"Nada encontrado sobre '{query}'."
+
+
+def search_context(query: str, max_results: int = 5) -> list[dict]:
+    """Busca contextual mínima no vault local.
+
+    Retorna uma lista de notas relevantes com título, caminho e trecho de evidência.
+    """
+    cleaned = (query or "").strip()
+    if not cleaned:
+        return []
+
+    query_low = cleaned.lower()
+    results = []
+
+    for path in KNOWLEDGE_DIR.rglob("*.md"):
+        text = path.read_text(encoding="utf-8", errors="ignore")
+        lower_text = text.lower()
+        if query_low not in lower_text:
+            continue
+
+        idx = lower_text.find(query_low)
+        snippet = text[max(0, idx - 80):idx + 140].replace("\n", " ").strip()
+        title = path.stem
+        rel = path.relative_to(KNOWLEDGE_DIR).as_posix()
+        results.append({
+            "title": title,
+            "path": rel,
+            "snippet": snippet,
+            "score": 1.0,
+        })
+        if len(results) >= max_results:
+            break
+
+    return results
+
+
+def build_memory_context(query: str, max_results: int = 3) -> str:
+    """Formata a busca contextual em um bloco curto para uso futuro no prompt."""
+    context = search_context(query, max_results=max_results)
+    if not context:
+        return ""
+
+    lines = ["[MEMÓRIA LOCAL RELEVANTE]"]
+    for item in context:
+        lines.append(f"- {item['title']} ({item['path']}): {item['snippet']}")
+    return "\n".join(lines)

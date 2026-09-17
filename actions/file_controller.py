@@ -87,17 +87,35 @@ def _resolve_path(raw: str) -> Path:
     if lower in shortcuts:
         return shortcuts[lower]
 
-    # "desktop/notlar/a.md" ve "desktop\notlar\a.md" — kisayol + alt yol.
-    # Bu dal olmadan tum dize asagidaki goreli-yol dalina dusuyor ve process'in
-    # CWD'sine gore cozuluyordu.  Proje home disindaysa _is_safe_path reddedip
-    # "Access denied" veriyor; home icindeyse daha kotusu oluyor ve dosya sessizce
-    # projenin icindeki olmayan bir "desktop" klasorune yaziliyordu.
+    # "desktop/notlar/a.md" ve "desktop\notlar\a.md" — kısayol + alt yol.
+    # Bu dal olmadan tüm dize aşağıdaki göreli-yol dalına düşüyor ve process'in
+    # CWD'sine göre çözülüyordu. Proje home dışında ise _is_safe_path reddedip
+    # "Access denied" veriyor; home içindeyse daha kötüsü oluyor ve dosya sessizce
+    # projenin içindeki olmayan bir "desktop" klasörüne yazılıyordu.
     head, sep, rest = raw.replace("\\", "/").partition("/")
     if sep and head.lower() in shortcuts:
         rest = rest.strip("/")
         return shortcuts[head.lower()] / rest if rest else shortcuts[head.lower()]
 
     return Path(raw).expanduser()
+
+
+def _human_label(path: str, name: str = "") -> str:
+    """Nome curto e amigável para respostas ao usuário."""
+    if name:
+        return name
+    raw = str(path or "").strip().strip('"').strip("'")
+    if not raw:
+        return "este item"
+    key = raw.lower().replace("\\", "/")
+    if key in {"desktop", "downloads", "documents", "pictures", "music", "videos", "home"}:
+        return key
+    candidate = _resolve_path(raw)
+    if candidate.name:
+        return candidate.name
+    if Path(raw).name:
+        return Path(raw).name
+    return "este item"
 
 def _format_size(b: int) -> str:
     for unit in ["B", "KB", "MB", "GB", "TB"]:
@@ -481,15 +499,19 @@ def get_file_info(path: str, name: str = "") -> str:
     except Exception as e:
         return f"Could not get file info: {e}"
 
-def open_folder(path: str) -> str:
+def open_folder(path: str, confirmed: bool = False) -> str:
     """Abre uma pasta no Explorer do Windows via subprocess direto."""
+    label = _human_label(path)
+    if not confirmed:
+        return f"Confirmar abertura da pasta '{label}'?"
+
     resolved = _resolve_path(path)
     if not _is_safe_path(resolved):
-        return f"Acesso negado: {path}, Senhor."
+        return f"Acesso negado: {label}, Senhor."
     if not resolved.exists() or not resolved.is_dir():
-        return f"Pasta não encontrada: {path}, Senhor."
+        return f"Pasta não encontrada: {label}, Senhor."
     subprocess.Popen(["explorer", str(resolved)])
-    return f"Pasta '{resolved.name}' aberta no Explorer, Senhor."
+    return f"Pasta '{resolved.name or label}' aberta no Explorer, Senhor."
 
 def file_controller(
     parameters: dict = None,
@@ -506,10 +528,12 @@ def file_controller(
         player.write_log(f"[file] {action} {name or path}")
 
     destructive_actions = {"delete", "rename", "move", "copy", "write"}
-    if action in destructive_actions and str(params.get("confirmed", "")).lower() not in ("yes", "true", "1", "confirm"):
+    confirmed = str(params.get("confirmed", "")).lower() in ("yes", "true", "1", "confirm")
+    if action in destructive_actions and not confirmed:
+        label = _human_label(path, name)
         if action == "delete":
-            return f"Deleting '{name or path}' is destructive. Confirm by calling again with confirmed=yes."
-        return f"This action is destructive. Confirm by calling again with confirmed=yes."
+            return f"Confirmar exclusão de '{label}'?"
+        return f"Confirmar {action} de '{label}'?"
 
     try:
         if action == "list":

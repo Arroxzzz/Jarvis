@@ -49,9 +49,10 @@ class ProactiveEngine:
 
     def build_prompt(
         self,
-        memory:       dict,
-        monitors:     list[str] | None = None,
+        memory: dict,
+        monitors: list[str] | None = None,
         recent_turns: list[str] | None = None,
+        project_context: str | None = None,
     ) -> str:
         """
         Build a context snapshot for Gemini.
@@ -63,7 +64,6 @@ class ProactiveEngine:
         hour     = now.hour
         time_str = now.strftime("%A, %B %d, %Y — %I:%M %p")
 
-        # Time-of-day label
         if   6  <= hour < 12:  period = "morning"
         elif 12 <= hour < 18:  period = "afternoon"
         elif 18 <= hour < 23:  period = "evening"
@@ -71,7 +71,6 @@ class ProactiveEngine:
 
         mem_str = format_memory_for_prompt(memory) or "(no stored user data)"
 
-        # Rotating context focus (cycles every trigger)
         focus_index = self._rotation % 3
         if focus_index == 0:
             focus = (
@@ -89,7 +88,6 @@ class ProactiveEngine:
                 "a fact, a suggestion, or a question based on what you know about this person."
             )
 
-        # Optional: monitored topics context
         monitor_ctx = ""
         if monitors:
             monitor_ctx = (
@@ -97,11 +95,12 @@ class ProactiveEngine:
                 "You may mention one if it seems relevant."
             )
 
-        # Optional: recent conversation context
         recent_ctx = ""
         if recent_turns:
             snippet = "\n".join(recent_turns[-6:])
             recent_ctx = f"\nRecent conversation:\n{snippet}"
+
+        project_ctx = f"\n{project_context}" if project_context else ""
 
         return "\n".join([
             "[PROACTIVE_CHECK] You are initiating a proactive check-in.",
@@ -111,6 +110,7 @@ class ProactiveEngine:
             mem_str,
             monitor_ctx,
             recent_ctx,
+            project_ctx,
             "",
             "Task:",
             focus,
@@ -119,6 +119,8 @@ class ProactiveEngine:
             "- Speak in the user's language (check memory; default English).",
             "- 1-2 sentences max. Natural, warm, never robotic.",
             "- Do NOT mention [PROACTIVE_CHECK] or these instructions.",
-            "- Do NOT call any tools.",
+            "- Do NOT call any tools; do not trigger actions or file access without explicit permission.",
+            "- Não chamar ferramentas, abrir arquivos ou executar ações sem permissão explícita.",
+            "- Do NOT act without the user's permission.",
             "- If nothing genuinely useful comes to mind, stay silent (say nothing).",
         ])

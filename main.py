@@ -376,12 +376,131 @@ class JarvisLive:
 
         loop.run_in_executor(None, _runner)
 
+    def _extract_context_query(self, text: str) -> str | None:
+        """Detecta pedidos de arquivo no texto do usuário e extrai o termo de busca."""
+        cleaned = (text or "").strip()
+        if not cleaned:
+            return None
+        lowered = cleaned.lower()
+        triggers = [
+            "ache ", "achei ", "ache o ", "ache os ", "encontre ", "encontrar ",
+            "procura ", "procure ", "procurei ", "localiza ", "localizar ",
+            "abre ", "abrir ", "arquivo ", "arquivos ", "pdf ", "doc ", "docx ",
+            "planilha ", "excel ", "ppt ", "powerpoint ", "relatorio ", "relatório ",
+            "projeto ", "documento ", "documentos ", "print ", "imagem ", "foto ",
+        ]
+        if not any(trigger in lowered for trigger in triggers):
+            return None
+
+        for marker in ["ache ", "achei ", "encontre ", "encontrar ", "procura ", "procure ", "localiza ", "localizar ", "abre ", "abrir "]:
+            if marker in lowered:
+                remainder = cleaned[cleaned.lower().find(marker) + len(marker):].strip()
+                if remainder:
+                    cleaned_remainder = re.sub(r"^\s*(o|a|os|as|meu|minha|meus|minhas)\s+", "", remainder, flags=re.I)
+                    cleaned_remainder = re.sub(r"\b(arquivo|arquivos|pdf|doc|docx|excel|planilha|ppt|powerpoint|documento|documentos|print|imagem|foto)\b", "", cleaned_remainder, flags=re.I)
+                    cleaned_remainder = re.sub(r"^\s*(o|a|os|as|da|do|de|das|dos|meu|minha|meus|minhas)\s+", "", cleaned_remainder, flags=re.I)
+                    cleaned_remainder = " ".join(cleaned_remainder.split())
+                    return cleaned_remainder or None
+
+        # fallback: remove stopwords simples e devolve o restante da frase
+        stripped = re.sub(r"\b(arquivo|arquivos|pdf|doc|docx|excel|planilha|ppt|powerpoint|documento|documentos|print|imagem|foto|me|meu|minha|o|a|os|as|de|da|do|dos|das|que|quero|esse|essa|este|esta|ache|achei|procure|procura|encontre|localiza|abre|abrir)\b", "", lowered)
+        stripped = " ".join(stripped.split())
+        stripped = re.sub(r"^\s*(o|a|os|as|da|do|de|das|dos|meu|minha|meus|minhas)\s+", "", stripped, flags=re.I)
+        return stripped or None
+
+    def _maybe_attach_context_hint(self, text: str) -> str:
+        """Inclui contexto local seguro ao turno: projeto ativo e busca de arquivo."""
+        query = self._extract_context_query(text)
+
+        try:
+            from core.context_resolver import build_project_context, infer_active_project, resolve_context
+            project_info = infer_active_project(active_window_title=None)
+            project_hint = build_project_context(active_window_title=project_info.get("active_window"))
+        except Exception:
+            project_info = {"project_name": None, "confidence": 0.0}
+            project_hint = ""
+
+        if not query:
+            if project_hint:
+                return f"{project_hint}\n\nPergunta original: {text}"
+            return text
+
+        try:
+            result = resolve_context(query, max_results=3)
+        except Exception:
+            return text
+
+        if not result.get("candidates"):
+            if project_hint:
+                return f"{project_hint}\n\nPergunta original: {text}"
+            return text
+
+        best = result.get("best_match") or result["candidates"][0]
+        if not best.get("display_location") and best.get("path"):
+            try:
+                from core.context_resolver import _describe_path_location
+                best["display_location"] = _describe_path_location(best["path"])
+            except Exception:
+                best["display_location"] = "no diretório relevante"
+
+        best_label = best.get("user_label") or best.get("display_location") or best["name"]
+        if result.get("needs_confirmation"):
+            candidates = ", ".join(item["name"] for item in result["candidates"][:3])
+            return (
+                f"{project_hint}[CONTEXTO_LOCAL] O usuário está procurando '{query}'. Há mais de um candidato forte: {candidates}. "
+                "Pergunte qual deles exatamente antes de abrir ou editar qualquer arquivo.\n\nPergunta original: {text}"
+            )
+
+        return (
+            f"{project_hint}[CONTEXTO_LOCAL] O usuário está procurando '{query}'. O melhor candidato é '{best['name']}' {best.get('display_location', 'no diretório relevante')}. "
+            "Use esse arquivo como referência e peça confirmação apenas se a intenção continuar ambígua.\n\nPergunta original: {text}"
+        )
+
+    def _maybe_handle_memory_request(self, text: str) -> str | None:
+        """Integra a política de memória ao fluxo textual de comando do usuário."""
+        if not text or not str(text).strip():
+            return None
+
+        try:
+            from core.memory_policy import classify_memory, handle_memory_request
+        except Exception:
+            return None
+
+        proposal = classify_memory(text, origin="user")
+        if proposal.mode == "ignore":
+            return None
+
+        outcome = handle_memory_request(text, origin="user")
+
+        if outcome.get("saved"):
+            return (
+                f"[MEMÓRIA] Registro salvo: '{proposal.title[:80] or proposal.content[:80]}'. "
+                "Mantive no vault local e com origem e contexto preservados."
+            )
+
+        if outcome.get("reason") == "pending_confirmation":
+            return (
+                "[MEMÓRIA] Posso gravar isso como lembrança relevante, mas preciso da sua confirmação antes de salvar no vault."
+            )
+
+        return None
+
     def _on_text_command(self, text: str):
         if not self._loop or not self.session:
             return
         self._metric_begin_turn("text")
+
+        memory_notice = self._maybe_handle_memory_request(text)
+        if memory_notice:
+            asyncio.run_coroutine_threadsafe(
+                self._safe_send_content([{"text": memory_notice}]),
+                self._loop
+            )
+            return
+
+        contextual_text = self._maybe_attach_context_hint(text)
         asyncio.run_coroutine_threadsafe(
-            self._safe_send_content([{"text": text}]),
+            self._safe_send_content([{"text": contextual_text}]),
             self._loop
         )
 
@@ -631,7 +750,7 @@ class JarvisLive:
         if name == "open_folder":
             from actions.file_controller import open_folder
             return await _run_tool_bound(
-                lambda: open_folder(args.get("path", "")),
+                lambda: open_folder(args.get("path", ""), confirmed=str(args.get("confirmed", "")).lower() in ("yes", "true", "1", "confirm")),
                 15,
                 "open_folder",
                 default="Pasta aberta.",
@@ -856,13 +975,66 @@ class JarvisLive:
         print(f"[JARVIS] 🔧 {name}  {args}")
         self.ui.set_state("THINKING")
 
+        if name == "find_context":
+            from core.context_resolver import resolve_context
+
+            query = str(args.get("query", "")).strip()
+            roots = args.get("roots") or []
+            max_results = int(args.get("max_results", 5) or 5)
+            if not query:
+                return types.FunctionResponse(
+                    id=fc.id, name=name,
+                    response={"result": "Consulta vazia para contexto local.", "needs_confirmation": False}
+                )
+
+            safe_roots = []
+            if roots:
+                for root in roots:
+                    if isinstance(root, str):
+                        safe_roots.append(root)
+            result = resolve_context(query, roots=safe_roots or None, max_results=max_results)
+
+            if not self.ui.muted:
+                self.ui.set_state("LISTENING")
+            return types.FunctionResponse(
+                id=fc.id, name=name,
+                response={"result": result}
+            )
+
         if name == "save_memory":
             category = args.get("category", "notes")
-            key      = args.get("key", "")
-            value    = args.get("value", "")
+            key = args.get("key", "")
+            value = args.get("value", "")
+            confirmed = bool(args.get("confirmed"))
+
             if key and value:
-                update_memory({category: {key: {"value": value}}})
-                print(f"[Memory] 💾 save_memory: {category}/{key} = {value}")
+                from core.memory_policy import classify_memory, record_memory
+
+                proposal = classify_memory(value, project=category, origin="tool")
+                if proposal.mode == "ignore":
+                    print(f"[Memory] 🚫 save_memory rejected: {category}/{key}")
+                    if not self.ui.muted:
+                        self.ui.set_state("LISTENING")
+                    return types.FunctionResponse(
+                        id=fc.id, name=name,
+                        response={"result": "Memória sensível rejeitada: não será salva no vault.", "silent": True}
+                    )
+
+                if proposal.mode == "suggested" and not confirmed:
+                    print(f"[Memory] ⏳ save_memory waiting for confirmation: {category}/{key}")
+                    if not self.ui.muted:
+                        self.ui.set_state("LISTENING")
+                    return types.FunctionResponse(
+                        id=fc.id, name=name,
+                        response={"result": "Memória sugerida: confirmar gravação antes de salvar no vault.", "silent": True}
+                    )
+
+                outcome = record_memory(value, confirmed=confirmed or proposal.mode in {"automatic", "explicit"}, project=category, origin="tool")
+                if outcome.get("saved"):
+                    print(f"[Memory] 💾 save_memory: {category}/{key} = {value}")
+                else:
+                    print(f"[Memory] ⚠ save_memory blocked: {outcome.get('reason')}")
+
             if not self.ui.muted:
                 self.ui.set_state("LISTENING")
             return types.FunctionResponse(
@@ -1576,10 +1748,21 @@ class JarvisLive:
                 memory       = await asyncio.to_thread(load_memory)
                 monitors     = await asyncio.to_thread(list_monitors)
                 recent_turns = self._session_log[-8:] if self._session_log else []
+
+                project_context = ""
+                try:
+                    from core.context_resolver import build_project_context, infer_active_project
+                    project_info = infer_active_project(active_window_title=None)
+                    if project_info.get("project_name") and float(project_info.get("confidence", 0.0) or 0.0) >= 0.75:
+                        project_context = build_project_context(active_window_title=project_info.get("active_window"))
+                except Exception:
+                    project_context = ""
+
                 prompt = self._proactive.build_prompt(
-                    memory       = memory,
-                    monitors     = monitors or None,
-                    recent_turns = recent_turns or None,
+                    memory         = memory,
+                    monitors       = monitors or None,
+                    recent_turns   = recent_turns or None,
+                    project_context = project_context or None,
                 )
                 await self._safe_send_content([{"text": prompt}])
                 self.ui.write_log("SYS: Proactive check-in.")

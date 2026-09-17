@@ -473,6 +473,23 @@ TOOL_DECLARATIONS = [
         }
     },
     {
+        "name": "find_context",
+        "description": (
+            "Finds relevant local files and folders on the user's machine using a safe, bounded search. "
+            "Use only for file lookup in known user folders such as Desktop, Downloads, and Documents. "
+            "Never scan the full disk. If multiple strong matches exist, return them and ask for confirmation."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "query": {"type": "STRING", "description": "The file name, topic, or phrase to search for"},
+                "roots": {"type": "ARRAY", "items": {"type": "STRING"}, "description": "Optional internal roots to search: desktop, downloads, documents"},
+                "max_results": {"type": "INTEGER", "description": "Max number of candidate files to return (default: 5)"},
+            },
+            "required": ["query"]
+        }
+    },
+    {
         "name": "save_memory",
         "description": (
             "Save an important personal fact about the user to long-term memory. "

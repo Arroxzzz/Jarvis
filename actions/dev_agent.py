@@ -567,6 +567,125 @@ def _build_project(
     return f"{msg}\n\nLast error:\n{last_output[:600]}"
 
 
+def _review_project(
+    description: str,
+    project_name: str = "",
+    project_dir: Path | None = None,
+    speak=None,
+    player=None,
+) -> str:
+    """Diagnóstico seguro e não destrutivo do projeto atual ou do diretório informado."""
+    root = Path(project_dir) if project_dir else Path(__file__).resolve().parent.parent
+    if project_name:
+        root = root / project_name if root.name != project_name else root
+
+    if not root.exists():
+        msg = f"Não encontrei o projeto '{project_name or root.name}', Senhor."
+        if speak:
+            speak(msg)
+        return msg
+
+    py_files: list[Path] = []
+    for item in root.rglob("*.py"):
+        if item.is_file() and ".venv" not in item.parts and "site-packages" not in item.parts:
+            py_files.append(item)
+
+    if not py_files:
+        msg = f"Não encontrei arquivos Python para revisar em '{root}', Senhor."
+        if speak:
+            speak(msg)
+        return msg
+
+    overview: list[str] = []
+    overview.append(f"Revisão de projeto: {root.name}")
+    overview.append(f"Descrição: {description or 'Sem descrição adicional'}")
+    overview.append(f"Arquivos Python: {len(py_files)}")
+
+    major_files = sorted(py_files, key=lambda p: (len(p.parts), p.name))[:8]
+    for item in major_files:
+        overview.append(f"- {item.relative_to(root)}")
+
+    recommendations: list[str] = []
+    if any("main.py" in str(item.name).lower() for item in py_files):
+        recommendations.append("Manter o ponto de entrada enxuto e separar lógica de negócio/estado do boot.")
+    recommendations.append("Preservar a aprovação explícita antes de qualquer ação destrutiva ou alteração real.")
+    recommendations.append("Manter a camada de memória separada do caminho principal de voz para reduzir risco e ruído.")
+
+    msg = (
+        "Revisão segura do projeto, Senhor. "
+        "Nenhuma alteração foi feita.\n\n"
+        + "\n".join(overview)
+        + "\n\nSugestões:\n- "
+        + "\n- ".join(recommendations)
+    )
+    if speak:
+        speak(msg[:600])
+    if player:
+        player.write_log(f"[DevAgent] {msg[:300]}")
+    return msg
+
+
+def _mentor_project(
+    description: str,
+    project_name: str = "",
+    project_dir: Path | None = None,
+    speak=None,
+    player=None,
+) -> str:
+    """Mentoria guiada: diagnóstico, riscos e patch proposto, sem aplicar alterações."""
+    root = Path(project_dir) if project_dir else Path(__file__).resolve().parent.parent
+    if project_name:
+        root = root / project_name if root.name != project_name else root
+
+    if not root.exists():
+        msg = f"Não encontrei o projeto '{project_name or root.name}' para mentoria, Senhor."
+        if speak:
+            speak(msg)
+        return msg
+
+    py_files = sorted(
+        item for item in root.rglob("*.py")
+        if item.is_file() and ".venv" not in item.parts and "site-packages" not in item.parts
+    )
+
+    if not py_files:
+        msg = f"Não há código Python suficiente para mentoria em '{root}', Senhor."
+        if speak:
+            speak(msg)
+        return msg
+
+    focus = py_files[0].relative_to(root)
+    risk_notes: list[str] = []
+    risk_notes.append("- Manter o fluxo principal de áudio e a sessão Live isolados de alterações automáticas.")
+    risk_notes.append("- Separar boot, runtime e regras de negócios para manter o projeto fácil de testar.")
+    risk_notes.append("- Pedir confirmação antes de qualquer mudança destrutiva ou de arquivo sensível.")
+
+    patches: list[str] = []
+    patches.append(
+        f"\n--- patch sugerido em {focus} ---\n"
+        "@@\n-    if not description:\n-        return \"Please describe the project you want me to build, sir.\"\n+    if not description:\n+        return \"Descreva o objetivo do projeto, Senhor.\"\n"
+    )
+    patches.append("\n- Aplicar apenas depois da aprovação do Senhor.")
+    patches.append("- Validar com testes focados antes de qualquer merge.")
+
+    msg = (
+        "Mentoria guiada, Senhor.\n\n"
+        f"Projeto: {root.name}\n"
+        f"Descrição: {description or 'Sem descrição adicional'}\n"
+        f"Arquivo principal de foco: {focus}\n\n"
+        "Riscos observados:\n"
+        + "\n".join(risk_notes)
+        + "\n\nPatch sugerido (somente proposta):\n"
+        + "\n".join(patches)
+        + "\n\nConclusão: nenhuma alteração foi aplicada; o próximo passo é validar e aprovar antes da execução."
+    )
+    if speak:
+        speak(msg[:800])
+    if player:
+        player.write_log(f"[DevAgent][Mentoria] {root.name}: patch proposto sem aplicar")
+    return msg
+
+
 def dev_agent(
     parameters: dict,
     response=None,
@@ -580,9 +699,28 @@ def dev_agent(
     language     = p.get("language", "python").strip()
     project_name = p.get("project_name", "").strip()
     timeout      = int(p.get("timeout", 30))
+    action       = str(p.get("action", "build")).strip().lower()
 
     if not description:
         return "Please describe the project you want me to build, sir."
+
+    if action in {"review", "diagnose", "analyze", "auditar"}:
+        return _review_project(
+            description=description,
+            project_name=project_name,
+            project_dir=p.get("project_dir"),
+            speak=speak,
+            player=player,
+        )
+
+    if action in {"mentor", "mentoria", "guide", "guiar"}:
+        return _mentor_project(
+            description=description,
+            project_name=project_name,
+            project_dir=p.get("project_dir"),
+            speak=speak,
+            player=player,
+        )
 
     return _build_project(
         description  = description,
