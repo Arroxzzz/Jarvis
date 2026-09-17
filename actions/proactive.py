@@ -26,15 +26,19 @@ class ProactiveEngine:
         self,
         min_silence_secs: int = 900,
         check_cooldown:   int = 1200,
+        enabled: bool = False,
     ):
         self.min_silence_secs = min_silence_secs
         self.check_cooldown   = check_cooldown
+        self.enabled          = enabled
         self._last_triggered  = 0.0
         self._rotation        = 0          # cycles through context focus areas
 
     # ── Trigger gate ───────────────────────────────────────────────────────────
 
     def should_trigger(self, last_user_speech: float) -> bool:
+        if not self.enabled:
+            return False
         now = time.monotonic()
         return (
             (now - last_user_speech) >= self.min_silence_secs

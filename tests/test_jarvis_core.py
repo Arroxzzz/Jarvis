@@ -287,6 +287,14 @@ def test_proactive_prompt_includes_project_context():
     assert "não chamar ferramentas" in prompt.lower()
 
 
+def test_proactive_is_disabled_by_default():
+    from actions.proactive import ProactiveEngine
+
+    engine = ProactiveEngine()
+    assert engine.enabled is False
+    assert engine.should_trigger(999999.0) is False
+
+
 def test_runtime_declares_context_tool():
     import main
 
@@ -784,7 +792,7 @@ def test_save_memory_tool_requires_confirmation_for_suggested_entries():
     assert kv_module.list_notes() == before
 
 
-def test_memory_request_is_integrated_into_text_flow_without_auto_saving_suggested_items():
+def test_memory_request_is_isolated_from_main_text_flow_and_does_not_interrupt_commands():
     from main import JarvisLive
     import core.knowledge_vault as kv_module
 
@@ -793,9 +801,26 @@ def test_memory_request_is_integrated_into_text_flow_without_auto_saving_suggest
     before = kv_module.list_notes()
     result = live._maybe_handle_memory_request(suggested)
 
-    assert result is not None
-    assert "confirmação" in result.lower()
+    assert result is None
     assert kv_module.list_notes() == before
+
+
+def test_memory_request_ignores_action_commands_and_system_orders():
+    from core.memory_policy import classify_memory
+
+    commands = [
+        "Mostra o que tem na área de trabalho",
+        "Onde está o arquivo que baixei hoje? é um pdf",
+        "Analisa esse código aqui e me diz o problema",
+        "Apaga essa pasta sem perguntar",
+        "Não é lembrança, é uma ordem",
+        "Esquece isso de notas por enquanto",
+        "Não precisa salvar nada",
+    ]
+
+    for text in commands:
+        proposal = classify_memory(text)
+        assert proposal.mode == "ignore", f"Comando confundido com memória: {text!r} => {proposal.mode}"
 
 
 def test_dev_agent_review_mode_is_non_destructive():

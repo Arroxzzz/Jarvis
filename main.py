@@ -284,6 +284,10 @@ class JarvisLive:
         underrun = (in_len == 0 and side == "play") or (out_len == 0 and side == "send")
         return {"side": side, "in_q": in_len, "out_q": out_len, "underrun": int(underrun)}
 
+    async def _bounded(self, loop, fn, timeout: float, label: str) -> str:
+        """Wrapper de timeout centralizado para manter a API consistente em toda a classe."""
+        return await _bounded(loop, fn, timeout, label)
+
     async def _safe_send_content(self, parts: list, turn_complete: bool = True) -> None:
         """Serializa envios de conteúdo para evitar chamadas concorrentes na sessão Live."""
         if not self.session:
@@ -457,46 +461,19 @@ class JarvisLive:
         )
 
     def _maybe_handle_memory_request(self, text: str) -> str | None:
-        """Integra a política de memória ao fluxo textual de comando do usuário."""
-        if not text or not str(text).strip():
-            return None
+        """Memória permanece isolada do fluxo principal do diálogo.
 
-        try:
-            from core.memory_policy import classify_memory, handle_memory_request
-        except Exception:
-            return None
-
-        proposal = classify_memory(text, origin="user")
-        if proposal.mode == "ignore":
-            return None
-
-        outcome = handle_memory_request(text, origin="user")
-
-        if outcome.get("saved"):
-            return (
-                f"[MEMÓRIA] Registro salvo: '{proposal.title[:80] or proposal.content[:80]}'. "
-                "Mantive no vault local e com origem e contexto preservados."
-            )
-
-        if outcome.get("reason") == "pending_confirmation":
-            return (
-                "[MEMÓRIA] Posso gravar isso como lembrança relevante, mas preciso da sua confirmação antes de salvar no vault."
-            )
-
+        Comandos normais do usuário não devem ser sequestrados por uma pergunta
+        de gravação. Se a intenção for realmente salvar, ela deve passar pelo tool
+        save_memory explícito, e não por um formulário automático no meio de cada
+        turno.
+        """
         return None
 
     def _on_text_command(self, text: str):
         if not self._loop or not self.session:
             return
         self._metric_begin_turn("text")
-
-        memory_notice = self._maybe_handle_memory_request(text)
-        if memory_notice:
-            asyncio.run_coroutine_threadsafe(
-                self._safe_send_content([{"text": memory_notice}]),
-                self._loop
-            )
-            return
 
         contextual_text = self._maybe_attach_context_hint(text)
         asyncio.run_coroutine_threadsafe(
@@ -1154,12 +1131,29 @@ class JarvisLive:
                 self._audio_queue_last_metric = now
 
     def _enqueue_mic_chunk(self, data: bytes) -> None:
+        if self.out_queue is None:
+            return
+        payload = {"data": data, "mime_type": f"audio/pcm;rate={SEND_SAMPLE_RATE}"}
         try:
-            self.out_queue.put_nowait(
-                {"data": data, "mime_type": f"audio/pcm;rate={SEND_SAMPLE_RATE}"}
-            )
+            self.out_queue.put_nowait(payload)
         except asyncio.QueueFull:
-            pass  # descarta o frame mais antigo em vez de travar o produtor de áudio
+            try:
+                self.out_queue.get_nowait()
+                self.out_queue.put_nowait(payload)
+            except Exception:
+                pass
+
+    def _enqueue_received_audio(self, data: bytes) -> None:
+        if self.audio_in_queue is None:
+            return
+        try:
+            self.audio_in_queue.put_nowait(data)
+        except asyncio.QueueFull:
+            try:
+                self.audio_in_queue.get_nowait()
+                self.audio_in_queue.put_nowait(data)
+            except Exception:
+                pass
 
     async def _listen_audio(self):
         print("[JARVIS] 🎤 Mic started")
@@ -1225,7 +1219,7 @@ class JarvisLive:
                             _audio_data = response.data
                             _SLICE = 2400
                             for _i in range(0, len(_audio_data), _SLICE):
-                                self.audio_in_queue.put_nowait(_audio_data[_i : _i + _SLICE])
+                                self._enqueue_received_audio(_audio_data[_i : _i + _SLICE])
 
                     if response.session_resumption_update and response.session_resumption_update.resumable:
                         self._resumption_handle = response.session_resumption_update.new_handle
@@ -1841,8 +1835,8 @@ class JarvisLive:
 
     def _prepare_session_state(self) -> None:
         """Reseta o estado de sessão vivo para manter run() organizado e consistente."""
-        self.audio_in_queue = asyncio.Queue()
-        self.out_queue = asyncio.Queue(maxsize=200)
+        self.audio_in_queue = asyncio.Queue(maxsize=200)
+        self.out_queue = asyncio.Queue(maxsize=80)
         self._turn_done_event = asyncio.Event()
         self._turn_done_event.set()
 

@@ -106,8 +106,35 @@ def _looks_like_automatic(text: str) -> bool:
     return False
 
 
+def _looks_like_action_or_context_command(text: str) -> bool:
+    lower = text.lower()
+
+    if any(phrase in lower for phrase in (
+        "não é lembrança",
+        "não precisa salvar",
+        "não precisa gravar",
+        "esquece isso de notas",
+        "esquece isso",
+        "ignora isso",
+        "não é anotação",
+        "é uma ordem",
+        "sem perguntar",
+    )):
+        return True
+
+    if re.search(r"\b(?:mostra|mostre|mostrar|mostrando|onde\s+est[aá]|qual\s+(?:é|foi|a|o)|analisa|analise|analisar|apaga|apague|deleta|delete|lista|abre|abrir|verifica|checa|me\s+diz|me\s+mostra)\b", lower):
+        return True
+
+    if any(word in lower for word in ("área de trabalho", "downloads", "arquivo", "pdf", "projeto atual", "me mostra", "o que tem")):
+        return True
+
+    return False
+
+
 def _looks_like_explicit_command(text: str) -> bool:
     lower = text.lower()
+    if _looks_like_action_or_context_command(lower):
+        return False
     if any(re.search(pattern, lower) for pattern in _EXPLICIT_PATTERNS):
         return True
     if lower.startswith("jarvis") and any(word in lower for word in ("lembre", "anote", "salve", "registre", "crie")):
@@ -152,6 +179,21 @@ def classify_memory(text: str, *, confirmed: bool = False, project: str | None =
             title="Conteúdo sensível rejeitado",
             content=cleaned,
             category="segredo",
+            project=project or "JARVIS",
+            origin=origin,
+            confidence=0.0,
+            priority="low",
+            requires_confirmation=False,
+            can_write=False,
+        )
+
+    if _looks_like_action_or_context_command(cleaned):
+        return MemoryProposal(
+            text=cleaned,
+            mode="ignore",
+            title="Comando de ação ou contexto",
+            content=cleaned,
+            category="comando",
             project=project or "JARVIS",
             origin=origin,
             confidence=0.0,
