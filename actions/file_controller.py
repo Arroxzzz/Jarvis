@@ -502,16 +502,20 @@ def get_file_info(path: str, name: str = "") -> str:
 def open_folder(path: str, confirmed: bool = False) -> str:
     """Abre uma pasta no Explorer do Windows via subprocess direto."""
     label = _human_label(path)
-    if not confirmed:
-        return f"Confirmar abertura da pasta '{label}'?"
-
     resolved = _resolve_path(path)
+
     if not _is_safe_path(resolved):
         return f"Acesso negado: {label}, Senhor."
     if not resolved.exists() or not resolved.is_dir():
         return f"Pasta não encontrada: {label}, Senhor."
-    subprocess.Popen(["explorer", str(resolved)])
-    return f"Pasta '{resolved.name or label}' aberta no Explorer, Senhor."
+
+    try:
+        proc = subprocess.Popen(["explorer", str(resolved)])
+        if proc.poll() is not None and proc.returncode not in (0, None):
+            return f"Não consegui abrir a pasta '{label}' no Explorer, Senhor."
+        return f"Pasta '{resolved.name or label}' aberta no Explorer, Senhor."
+    except Exception as exc:
+        return f"Não consegui abrir a pasta '{label}' no Explorer: {exc}"
 
 def file_controller(
     parameters: dict = None,
@@ -527,13 +531,11 @@ def file_controller(
     if player:
         player.write_log(f"[file] {action} {name or path}")
 
-    destructive_actions = {"delete", "rename", "move", "copy", "write"}
+    destructive_actions = {"delete"}
     confirmed = str(params.get("confirmed", "")).lower() in ("yes", "true", "1", "confirm")
     if action in destructive_actions and not confirmed:
         label = _human_label(path, name)
-        if action == "delete":
-            return f"Confirmar exclusão de '{label}'?"
-        return f"Confirmar {action} de '{label}'?"
+        return f"Confirmar exclusão de '{label}'?"
 
     try:
         if action == "list":

@@ -14,11 +14,15 @@
 - [x] Roteamento determinístico, timeouts e fallbacks de provider.
 - [x] Reincidência de contexto em background controlada.
 - [x] Confirmações locais para ações destrutivas.
+- [x] Ajuste final da política de arquivos: somente exclusão exige confirmação; ações não destrutivas seguem o fluxo normal.
+- [x] Correção de `open_folder`: não pede confirmação desnecessária e não informa falso sucesso quando o Explorer falha.
 - [x] Memória local com política de 4 estados: automatic, suggested, explicit e ignore.
 - [x] Contexto local de arquivo e projeto ativo em busca segura.
 - [x] Revisão/mentoria segura do projeto sem autoalteração.
 - [x] Integração final da memória no fluxo textual com confirmação de itens sugeridos.
-- [x] Suíte relevante verde: 72 testes passaram em 3.03s.
+- [x] Suíte relevante verde: 76 testes passaram em 2.91s.
+- [x] Plugins externos e desconhecidos protegidos por opt-in por padrão.
+- [x] Log de boot atualizado para reportar apenas plugins ativos e desligados.
 
 ## Estado atual do sistema
 
@@ -27,13 +31,19 @@
 - A memória local usa Obsidian/Markdown em `D:\Memoria_Jarvis` e guarda registros elegíveis com origem, contexto e confiança.
 - O contexto do computador usa busca limitada e rótulos amigáveis, sem expor caminhos absolutos para o usuário.
 - O `dev_agent` atua em revisão e mentoria guiada, sem aplicar alterações automáticas sem aprovação.
-- O sistema respeita as regras de segurança: confirmação para ações sensíveis, rejeição de segredos e bloqueio de gravações casuais.
+- O sistema respeita as regras de segurança: confirmação para ações sensíveis, rejeição de segredos, bloqueio de gravações casuais e opt-in por padrão para plugins externos.
+- O carregamento de plugins foi fechado em segurança: módulos novos ou desconhecidos não são ativados sem consentimento explícito do usuário.
 
 ## Próximo passo recomendado
 
-- [ ] Usar a linha de produto atual em operação real de rotina, sem expandir escopo.
-- [ ] Recolher feedback de uso real em alguns turnos controlados para ajustar UX e mensagens.
-- [ ] Só depois decidir se abre a próxima camada: otimização de casa, sincronização adicional ou refinamento final de presença.
+- [x] Usar a linha de produto atual em operação real de rotina, sem expandir escopo.
+- [x] Recolher feedback de uso real em alguns turnos controlados para ajustar UX e mensagens.
+- [x] Só depois decidir se abre a próxima camada: otimização de casa, sincronização adicional ou refinamento final de presença.
+- [ ] Validar em uso real o comportamento de abertura de pastas e de criação/movimentação de arquivos em tarefas do dia a dia antes de abrir a próxima etapa de refinamento do assistente.
+
+### Estado operacional atual
+
+A linha que está em produção hoje é a linha segura e validada: voz contínua, memória local, contexto contextualizado, diagnóstico guiado e plugin opt-in. O próximo avanço relevante é uso real controlado, não expansão de autonomia nem acréscimo de escopo.
 
 ## Restrições finais
 

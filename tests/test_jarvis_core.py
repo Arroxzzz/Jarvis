@@ -86,6 +86,11 @@ def test_pbkdf2_deterministic():
     assert _derive_key("abc") != _derive_key("ABC")
 
 
+def test_plugin_desconhecido_nasce_desligado():
+    from memory.config_manager import get_plugin_enabled
+    assert get_plugin_enabled("plugin_de_terceiro_nunca_visto") is False
+
+
 import core.knowledge_vault as kv_module
 
 
@@ -512,18 +517,35 @@ def test_file_actions_use_human_friendly_names(tmp_path):
     assert "lixeira" in result.lower() or "trash" in result.lower()
 
 
-def test_open_folder_requires_explicit_confirmation():
+def test_open_folder_does_not_require_confirmation(tmp_path):
     from actions.file_controller import open_folder
 
-    home = Path.home()
-    result = open_folder(str(home))
+    target = tmp_path / "pasta_para_abrir"
+    target.mkdir()
 
-    assert "confirmar" in result.lower()
-    assert str(home) not in result.lower()
+    result = open_folder(str(target))
 
-    confirmed = open_folder(str(home), confirmed=True)
-    assert "confirmar" not in confirmed.lower()
-    assert "explorer" in confirmed.lower() or "pasta" in confirmed.lower()
+    assert "confirmar" not in result.lower()
+    assert "explorer" in result.lower() or "pasta" in result.lower()
+
+
+def test_move_does_not_require_confirmation_for_non_destructive_action(tmp_path):
+    from actions.file_controller import file_controller
+
+    source = tmp_path / "origem.txt"
+    source.write_text("x", encoding="utf-8")
+    destination = tmp_path / "destino"
+    destination.mkdir()
+
+    result = file_controller({
+        "action": "move",
+        "path": str(tmp_path),
+        "name": "origem.txt",
+        "destination": str(destination),
+    })
+
+    assert "confirmar" not in result.lower()
+    assert "moved" in result.lower() or "mov" in result.lower() or "movi" in result.lower()
 
 
 def test_resolve_context_prefers_active_project_when_window_matches(tmp_path):

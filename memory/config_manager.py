@@ -106,8 +106,8 @@ def save_brief_enabled(enabled: bool) -> None:
 
 
 def get_plugin_enabled(plugin_name: str) -> bool:
-    """Plugins are enabled by default the moment they're discovered (opt-out model)."""
-    return load_api_keys().get("plugins_enabled", {}).get(plugin_name, True)
+    """Opt-in: plugin desconhecido nasce DESLIGADO até ser habilitado no Plugin Manager."""
+    return load_api_keys().get("plugins_enabled", {}).get(plugin_name, False)
 
 
 def save_plugin_enabled(plugin_name: str, enabled: bool) -> None:

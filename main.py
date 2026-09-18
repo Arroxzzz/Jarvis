@@ -251,8 +251,12 @@ class JarvisLive:
             logger=lambda msg: print(f"[Plugins] {msg}"),   # terminal apenas — silencioso no HUD
         )
         _pcount = self._plugin_registry.list_for_ui()
-        _pvalid = sum(1 for p in _pcount if p["valid"])
-        self.ui.write_log(f"SYS: JARVIS Online — {_pvalid} módulo(s) carregado(s).")
+        _pon = sum(1 for p in _pcount if p["enabled"])
+        _poff = sum(1 for p in _pcount if p["valid"] and not p["enabled"])
+        self.ui.write_log(
+            f"SYS: JARVIS Online — {_pon} módulo(s) ativo(s)"
+            + (f", {_poff} desligado(s) — ative em ⚙ PLUGINS." if _poff else ".")
+        )
         self.ui.get_plugins = self._plugin_registry.list_for_ui
         self.ui.request_say = self.plugin_say   # plugins: mid-task speech channel
 
@@ -1932,8 +1936,8 @@ class JarvisLive:
         if is_net_err:
             self._conn_backoff = min(getattr(self, "_conn_backoff", 3) * 2, 60)
             self.ui.write_log(
-                f"NET: Bağlantı kurulamadı — {self._conn_backoff}s sonra tekrar deneniyor. "
-                "(VPN gerekiyor olabilir)"
+                f"NET: Falha de conexão — nova tentativa em {self._conn_backoff}s. "
+                "(pode ser necessário VPN)"
             )
         else:
             self._conn_backoff = 3
