@@ -34,3 +34,7 @@
 {"ts": "2026-09-18T08:16:05.078495+00:00", "action": "delete", "target": "delete_me.txt", "allowed": true}
 {"ts": "2026-09-18T08:16:05.143295+00:00", "action": "move", "target": "origem.txt", "allowed": true}
 {"ts": "2026-09-18T08:16:05.176331+00:00", "action": "delete", "target": "lista.txt", "allowed": false}
+{"ts": "2026-09-18T08:38:22.474169+00:00", "action": "delete", "target": "delete_me.txt", "allowed": false}
+{"ts": "2026-09-18T08:38:22.553077+00:00", "action": "delete", "target": "delete_me.txt", "allowed": true}
+{"ts": "2026-09-18T08:38:22.593175+00:00", "action": "move", "target": "origem.txt", "allowed": true}
+{"ts": "2026-09-18T08:38:22.608994+00:00", "action": "delete", "target": "lista.txt", "allowed": false}

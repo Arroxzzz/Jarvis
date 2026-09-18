@@ -118,21 +118,6 @@ def _youtube_video_tool(args: dict, *, player=None, session_memory=None, speak=N
     return youtube_video(parameters=args, response=None, player=player, session_memory=session_memory, speak=speak)
 
 
-@register_tool("screen_process", declaration=_decl("screen_process"), kind="advanced")
-def _screen_process_tool(args: dict, *, jarvis=None, loop=None, **_extra):
-    if jarvis is None or loop is None:
-        return "Screen process requires the live session context."
-    return jarvis._handle_screen_process(args, loop)
-
-
-@register_tool("close_camera", declaration=_decl("close_camera"), kind="advanced")
-def _close_camera_tool(args: dict, *, jarvis=None, **_extra):
-    if jarvis is None:
-        return "Camera close requires the live session context."
-    jarvis.ui.stop_camera_stream()
-    return "Camera closed."
-
-
 @register_tool("computer_settings", declaration=_decl("computer_settings"), kind="advanced")
 def _computer_settings_tool(args: dict, *, player=None, **_extra):
     return computer_settings(parameters=args, response=None, player=player)
@@ -196,26 +181,6 @@ def _manage_monitor_tool(args: dict, **_extra):
         result = list_monitors()
         return ("Monitoring: " + ", ".join(result)) if result else "No topics are being monitored."
     return "Specify action (add/remove/list) and a topic."
-
-
-@register_tool("shutdown_jarvis", declaration=_decl("shutdown_jarvis"), kind="advanced")
-def _shutdown_jarvis_tool(args: dict, *, jarvis=None, **_extra):
-    if jarvis is None:
-        return "Shutting down, Senhor."
-    jarvis.ui.write_log("SYS: Shutdown requested.")
-
-    async def _do_shutdown():
-        await jarvis._save_session_summary()
-        try:
-            await jarvis._safe_send_content([{"text": "Say a brief natural goodbye to the user."}])
-        except Exception:
-            pass
-        await asyncio.sleep(1.5)
-        import os as _os
-        _os._exit(0)
-
-    asyncio.create_task(_do_shutdown())
-    return "Shutting down, Senhor."
 
 
 @register_tool("deep_reasoning", declaration=_decl("deep_reasoning"), kind="advanced")

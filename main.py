@@ -769,6 +769,25 @@ class JarvisLive:
                 response={"result": result}
             )
 
+        if name == "shutdown_jarvis":
+            self.ui.write_log("SYS: Shutdown requested.")
+
+            async def _do_shutdown():
+                await self._save_session_summary()
+                try:
+                    await self._safe_send_content([{"text": "Say a brief natural goodbye to the user."}])
+                except Exception:
+                    pass
+                await asyncio.sleep(1.5)
+                import os as _os
+                _os._exit(0)
+
+            asyncio.create_task(_do_shutdown())
+            return types.FunctionResponse(
+                id=fc.id, name=name,
+                response={"result": "Shutting down, Senhor."}
+            )
+
         if name == "sync_memory":
             self.ui.write_log("SYS: Sincronizando com a nuvem...")
 
