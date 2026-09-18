@@ -13,6 +13,8 @@ KNOWLEDGE_DIR = OBSIDIAN_VAULT
 KNOWLEDGE_DIR.mkdir(parents=True, exist_ok=True)
 
 _SAFE_NAME = re.compile(r"^[\w\-\s]+$", re.UNICODE)
+_CAPITALIZED = r"[A-ZÁÀÂÃÉÊÍÓÔÕÚÇ][\wÀ-ÿ-]*"
+_ENTITY_PATTERN = re.compile(rf"{_CAPITALIZED}(?:\s+{_CAPITALIZED}){{0,2}}")
 
 
 def _resolve(name: str) -> Path:
@@ -22,11 +24,39 @@ def _resolve(name: str) -> Path:
     return KNOWLEDGE_DIR / f"{name}.md"
 
 
+def _extract_entities(text: str) -> list[str]:
+    candidates: dict[str, str] = {}
+    masked = re.sub(r"\[\[.*?\]\]", lambda match: " " * len(match.group()), text)
+    for match in _ENTITY_PATTERN.finditer(masked):
+        entity = match.group(0).strip()
+        if len(entity.split()) == 1:
+            before = text[:match.start()].rstrip()
+            if not before or before[-1] in ".!?\n":
+                continue
+        key = entity.casefold()
+        candidates.setdefault(key, entity)
+
+    return [entity for key, entity in candidates.items()
+            if len(re.findall(re.escape(entity), text, re.IGNORECASE)) >= 2]
+
+
+def _link_first_occurrence(text: str, entity: str) -> str:
+    pattern = re.compile(re.escape(entity), re.IGNORECASE)
+    for match in pattern.finditer(text):
+        if text.rfind("[[", 0, match.start()) > text.rfind("]]", 0, match.start()):
+            continue
+        return text[:match.start()] + f"[[{entity}]]" + text[match.end():]
+    return text
+
+
 def write_note(name: str, content: str, append: bool = False) -> str:
     path = _resolve(name)
     if append and path.exists():
         existing = path.read_text(encoding="utf-8")
         content = existing.rstrip() + "\n\n" + content
+    for entity in _extract_entities(content):
+        if entity.casefold() != path.stem.casefold():
+            content = _link_first_occurrence(content, entity)
     path.write_text(content.strip() + "\n", encoding="utf-8")
     return f"Nota '{path.stem}' salva."
 
@@ -57,6 +87,15 @@ def search_notes(query: str, max_results: int = 5) -> str:
     return "\n".join(hits) if hits else f"Nada encontrado sobre '{query}'."
 
 
+def backlinks(name: str) -> list[str]:
+    needle = f"[[{name.removesuffix('.md')}]]".casefold()
+    return [
+        path.stem
+        for path in KNOWLEDGE_DIR.rglob("*.md")
+        if needle in path.read_text(encoding="utf-8", errors="ignore").casefold()
+    ]
+
+
 def search_context(query: str, max_results: int = 5) -> list[dict]:
     """Busca contextual mínima no vault local.
 
@@ -84,11 +123,15 @@ def search_context(query: str, max_results: int = 5) -> list[dict]:
             "path": rel,
             "snippet": snippet,
             "score": 1.0,
+            "backlink_count": len(backlinks(title)),
         })
-        if len(results) >= max_results:
-            break
 
-    return results
+    ranked = sorted(
+        results,
+        key=lambda item: (item["score"], item["backlink_count"]),
+        reverse=True,
+    )
+    return ranked[:max_results]
 
 
 def build_memory_context(query: str, max_results: int = 3) -> str:

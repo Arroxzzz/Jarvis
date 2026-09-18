@@ -5,6 +5,7 @@ import sqlite3
 from pathlib import Path
 
 from memory.memory_manager import get_base_dir
+from core.knowledge_vault import OBSIDIAN_VAULT
 
 DB_PATH = get_base_dir() / "memory" / "context_index.db"
 
@@ -63,6 +64,7 @@ def index_exists() -> bool:
 
 
 def rebuild_index(roots: list[Path]) -> None:
+    roots = [*roots, OBSIDIAN_VAULT]
     if not roots:
         return
 

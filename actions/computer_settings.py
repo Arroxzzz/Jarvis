@@ -6,6 +6,7 @@ import time
 import subprocess
 import platform
 from pathlib import Path
+from core import write_guard
 
 try:
     import pyautogui
@@ -582,8 +583,6 @@ ACTION_MAP: dict[str, callable] = {
     "shutdown":            shutdown_computer,
 }
 
-_DANGEROUS_ACTIONS = {"restart", "shutdown"}
-
 _FAST_RULES = {
     r"(volume.*(bai|baix|dimin|reduz|menos)|(bai|baix|dimin|reduz|menos).*volume)": ("volume", "down"),
     r"(volume.*(sobe|aument|mais|max)|(sobe|aument|mais|max).*volume)":              ("volume", "up"),
@@ -686,13 +685,15 @@ def computer_settings(
     if player:
         player.write_log(f"[Settings] {action}")
 
-    if action in _DANGEROUS_ACTIONS:
-        confirmed = str(params.get("confirmed", "")).lower()
-        if confirmed not in ("yes", "true", "1", "confirm"):
+    confirmed = str(params.get("confirmed", "")).lower() in ("yes", "true", "1", "confirm")
+    confirmation = write_guard.require_confirmation(action, action, confirmed)
+    if confirmation:
+        if action in ("restart", "shutdown"):
             return (
                 f"This will {action} the computer. "
                 f"Please confirm by calling again with confirmed=yes."
             )
+        return confirmation
 
     if action == "volume_set":
         try:
@@ -736,6 +737,8 @@ def computer_settings(
         return f"Unknown action: '{raw_action}'."
 
     try:
+        if action in write_guard.DESTRUCTIVE_ACTIONS:
+            write_guard.log_action(action, "computer", True)
         func()
         return f"Done: {action}."
     except Exception as e:

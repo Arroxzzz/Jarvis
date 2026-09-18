@@ -5,6 +5,7 @@ import subprocess
 from pathlib import Path
 from datetime import datetime
 from core.paths import get_home_dir
+from core import write_guard
 
 try:
     import send2trash
@@ -14,20 +15,8 @@ except ImportError:
 
 _OS = platform.system()  # "Windows" | "Darwin" | "Linux"
 
-_SAFE_ROOTS: list[Path] = [
-    get_home_dir(),
-]
-
 def _is_safe_path(target: Path) -> bool:
-    """Verilen path _SAFE_ROOTS içinde mi? Değilse işlemi reddet."""
-    try:
-        resolved = target.resolve()
-        return any(
-            resolved == root.resolve() or resolved.is_relative_to(root.resolve())
-            for root in _SAFE_ROOTS
-        )
-    except Exception:
-        return False
+    return write_guard.is_write_allowed("path", target)
 
 def _get_desktop() -> Path:
     if _OS == "Linux":
@@ -531,66 +520,98 @@ def file_controller(
     if player:
         player.write_log(f"[file] {action} {name or path}")
 
-    destructive_actions = {"delete"}
     confirmed = str(params.get("confirmed", "")).lower() in ("yes", "true", "1", "confirm")
-    if action in destructive_actions and not confirmed:
-        label = _human_label(path, name)
-        return f"Confirmar exclusão de '{label}'?"
+    label = _human_label(path, name)
+    confirmation = (
+        write_guard.require_confirmation(action, label, confirmed)
+        if action == "delete" else None
+    )
+    if confirmation:
+        write_guard.log_action(action, label, False)
+        return confirmation
 
     try:
         if action == "list":
-            return list_files(path)
+            result = list_files(path)
+            write_guard.log_action(action, label, True)
+            return result
 
         elif action == "create_file":
-            return create_file(path, name=name, content=params.get("content", ""))
+            result = create_file(path, name=name, content=params.get("content", ""))
+            write_guard.log_action(action, label, True)
+            return result
 
         elif action == "create_folder":
-            return create_folder(path, name=name)
+            result = create_folder(path, name=name)
+            write_guard.log_action(action, label, True)
+            return result
 
         elif action == "delete":
-            return delete_file(path, name=name)
+            result = delete_file(path, name=name)
+            write_guard.log_action(action, label, True)
+            return result
 
         elif action == "move":
-            return move_file(path, name=name, destination=params.get("destination", ""))
+            result = move_file(path, name=name, destination=params.get("destination", ""))
+            write_guard.log_action(action, label, True)
+            return result
 
         elif action == "copy":
-            return copy_file(path, name=name, destination=params.get("destination", ""))
+            result = copy_file(path, name=name, destination=params.get("destination", ""))
+            write_guard.log_action(action, label, True)
+            return result
 
         elif action == "rename":
-            return rename_file(path, name=name, new_name=params.get("new_name", ""))
+            result = rename_file(path, name=name, new_name=params.get("new_name", ""))
+            write_guard.log_action(action, label, True)
+            return result
 
         elif action == "read":
-            return read_file(path, name=name)
+            result = read_file(path, name=name)
+            write_guard.log_action(action, label, True)
+            return result
 
         elif action == "write":
-            return write_file(
+            result = write_file(
                 path, name=name,
                 content=params.get("content", ""),
                 append=params.get("append", False)
             )
+            write_guard.log_action(action, label, True)
+            return result
 
         elif action == "find":
-            return find_files(
+            result = find_files(
                 name=name or params.get("name", ""),
                 extension=params.get("extension", ""),
                 path=path,
                 max_results=min(int(params.get("max_results", 20)), 50),
             )
+            write_guard.log_action(action, label, True)
+            return result
 
         elif action == "largest":
-            return get_largest_files(
+            result = get_largest_files(
                 path=path,
                 count=int(params.get("count", 10)),
             )
+            write_guard.log_action(action, label, True)
+            return result
 
         elif action == "disk_usage":
-            return get_disk_usage(path)
+            result = get_disk_usage(path)
+            write_guard.log_action(action, label, True)
+            return result
 
         elif action == "organize_desktop":
-            return organize_desktop()
+            result = organize_desktop()
+            write_guard.log_action(action, label, True)
+            return result
 
         elif action == "info":
-            return get_file_info(path, name=name)
+            result = get_file_info(path, name=name)
+            write_guard.log_action(action, label, True)
+            return result
 
         else:
             return f"Unknown action: '{action}'"

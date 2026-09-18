@@ -15,11 +15,14 @@
   conclusão, duração de tools e duração de providers são emitidos como eventos `[METRIC]`.
 - `core/llm_client.py` mede chamadas remotas Groq/OpenRouter sem registrar conteúdo.
 - Comandos de texto agora iniciam eventos `[METRIC]` próprios; o caminho sem microfone participa do baseline.
-- `main.py` e `ui.py` compilam sem erros; suíte relevante atual: 76 testes passando.
+- `main.py` e `ui.py` compilam sem erros; suíte relevante atual: 78 testes passando.
 - `core/llm_client.py` agora registra `Retry-After`/rate-limit, bloqueia provider em circuit breaker e faz fallback Groq→OpenRouter de forma controlada.
 - O loader de plugins foi ajustado para opt-in por padrão: plugins novos descobertos em `/plugins` nascem desligados até ativação explícita no Plugin Manager; isso evita que código de terceiro seja ativado por omissão.
 - O log de boot em `main.py` agora conta plugins ativos e desligados, sem anunciar módulos indisponíveis como “carregados”.
 - A camada de arquivos foi ajustada para a regra de produto: somente exclusão exige confirmação; criação, movimentação e abertura de pasta não bloqueiam o fluxo normal, e `open_folder` agora informa o resultado real do Explorer em vez de afirmar sucesso falso.
+- A confirmação e a auditoria de ações estão centralizadas em `core/write_guard.py`; os fluxos de arquivo e configurações usam o guard sem alterar o áudio ou a sessão Live.
+- O runtime de tarefas em background foi extraído para `core/background_tasks.py`; `JarvisLive` usa `BackgroundTaskTracker` para contador, lock, deduplicação e entrega de resultados ao painel.
+- O vault Obsidian agora cria WikiLinks automáticos por regex, oferece backlinks e participa do índice SQLite de contexto; a relevância considera a quantidade de backlinks.
 
 ## Problemas ainda conhecidos
 
@@ -31,7 +34,7 @@
 - Autenticação diária por senha/passphrase foi cancelada por decisão do Senhor Paulo.
 - Kill switch local implementado: `Ctrl+Shift+F12` ou menu da bandeja encerra o processo imediatamente, independente da Gemini.
 - Defesa anti-prompt-injection adicionada ao prompt-base; conteúdo externo é tratado como dado não confiável.
-- `main.py` concentra sessão Live, áudio, tools, visão, reconexão, memória e watchdog.
+- `main.py` concentra sessão Live, áudio, tools, visão, reconexão, memória e watchdog; o estado de tasks e painel fica em `core/background_tasks.py`.
 - O tamanho atual da orchestrator não é um problema por si só, mas é um sinal de acoplamento; a estratégia atual é decompor em blocos pequenos e testados sem mexer em áudio ou em lógica crítica.
 - Meta de manutenção: manter a orquestração principal em faixa de 600-900 linhas, e mover helpers de áudio, visão, tools e monitoramento para módulos específicos conforme a decomposição continuar.
 - A rodada atual de refatoração controlada foi concluída com `main.py` em 2.433 linhas; o lifecycle ficou mais organizado, mas a meta de 600-900 linhas ainda exige uma fase posterior de extração para módulos próprios.
@@ -140,9 +143,11 @@ Free tier não significa SLA, disponibilidade contínua ou latência constante.
 - A memória local foi integrada com política de decisão em quatro estados: automatic, suggested, explicit e ignore.
 - O contexto local do computador e do projeto foi resolvido com busca segura, sem expor caminhos absolutos ao usuário.
 - O `dev_agent` atua em revisão e mentoria guiada, sem autoalteração irrestrita.
-- O sistema foi validado com 76 testes passando, confirmando a estabilidade da linha atual.
+- O sistema foi validado com 78 testes passando, confirmando a estabilidade da linha atual.
 - O modelo de plugins foi fechado em opt-in: qualquer plugin desconhecido ou de terceiro nasce desligado até habilitação explícita, evitando ativação silenciosa por descoberta automática.
 - A experiência de uso do assistente foi refinada para reduzir ruído de confirmação: ações não destrutivas seguem fluxo direto e só exclusão exige consentimento local.
+- A Fase 4 foi concluída com `BackgroundTaskTracker`; a suíte principal permanece verde com 78 testes.
+- A Fase 5 foi concluída com WikiLinks, backlinks e indexação do vault; a suíte completa permanece verde com 78 testes.
 
 ## Roadmap de refatoração aprovado
 

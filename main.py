@@ -79,6 +79,7 @@ from core.llm_client           import call_llm_text, get_openrouter_model, FREE_
 from core.async_tool_runner    import run_bounded as _bounded
 from core.async_tool_runner    import run_tool_bound as _run_tool_bound
 from core import context_index
+from core.background_tasks     import BackgroundTaskTracker
 from core.runtime_constants    import (
     TZ_BR as _TZ_BR,
     LIVE_MODEL_FALLBACKS,
@@ -239,9 +240,7 @@ class JarvisLive:
         self._pending_cancel_phrase: str | None = None   # frase de cancelamento adiada até o tool_response sair
         self._last_turn_activity: float = time.monotonic()   # watchdog anti-travamento de mic
         self._watchdog_force_count: int = 0   # disparos consecutivos do watchdog — reset em turno saudável
-        self._bg_tasks_pending: int  = 0       # tools rodando em background (code_helper/web_search assíncronos)
-        self._bg_tasks_lock          = threading.Lock()
-        self._panel_context_cache: dict[str, set[str]] = {}  # dedupe panel results already injected as context
+        self._tasks = BackgroundTaskTracker()
         self._coulson_stop          = asyncio.Event()
         self._enhanced_live = True  # affective dialog + proactive audio; auto-disabled if the server rejects them
         self._live_candidates: list[str] = []   # preenchido em _resolve_live_model()
@@ -347,44 +346,6 @@ class JarvisLive:
             asyncio.run_coroutine_threadsafe(_say(), loop)
         except Exception as e:
             print(f"[PluginSay] {e}")
-
-    def _panel_result_already_seen(self, kind: str, payload: str) -> bool:
-        """Suppress duplicate background-context injections after the result already appeared in the panel."""
-        cache = self._panel_context_cache.setdefault(kind, set())
-        token = payload.strip().lower()
-        if not token:
-            return True
-        if token in cache:
-            return True
-        cache.add(token)
-        return False
-
-    def _deliver_panel_result(self, kind: str, label: str, payload: str, body: str, context_prefix: str) -> None:
-        """Show a result in the UI panel once and inject it into the live context only when it is new."""
-        panel_key = f"{kind.lower()}::{payload[:220]}"
-        if self._panel_result_already_seen(kind, panel_key):
-            return
-        self.ui.show_content(label, body)
-        self.ui.write_log(f"SYS: {label} disponível no painel.")
-        self._safe_send_content_threadsafe(
-            f"[{context_prefix} — não leia em voz alta, use como memória]\n{body[:2000]}"
-        )
-
-    def _spawn_background_task(self, fn, *, task_name: str = "background") -> None:
-        """Schedule a background task while keeping the pending-counter bookkeeping centralized."""
-        loop = asyncio.get_event_loop()
-
-        def _runner():
-            with self._bg_tasks_lock:
-                self._bg_tasks_pending += 1
-            try:
-                fn()
-            finally:
-                with self._bg_tasks_lock:
-                    self._bg_tasks_pending = max(0, self._bg_tasks_pending - 1)
-                print(f"[JARVIS] 🔄 {task_name} finished")
-
-        loop.run_in_executor(None, _runner)
 
     def _extract_context_query(self, text: str) -> str | None:
         """Detecta pedidos de arquivo no texto do usuário e extrai o termo de busca."""
@@ -825,7 +786,7 @@ class JarvisLive:
                 except Exception as e:
                     self.ui.write_log(f"SYS: ⚠ Falha no sync: {e}")
 
-            self._spawn_background_task(_bg_sync, task_name="sync_memory")
+            self._tasks.spawn(_bg_sync, asyncio.get_event_loop(), task_name="sync_memory")
             result = "Sincronizando agora, Senhor. Te aviso quando terminar."
             if not self.ui.muted:
                 self.ui.set_state("LISTENING")
@@ -1381,12 +1342,11 @@ class JarvisLive:
         sessão — resetar o mesmo turno preso indefinidamente não resolve
         um backend saturado, só mascara o sintoma.
         CONGELADO enquanto houver tool síncrona ativa (_active_tool_tasks)
-        ou tool assíncrona em background (_bg_tasks_pending) — a ausência
+        ou tool assíncrona em background — a ausência
         de áudio nesse intervalo é esperada, não um travamento real."""
         while True:
             await asyncio.sleep(5)
-            with self._bg_tasks_lock:
-                bg_tasks_pending = self._bg_tasks_pending
+            bg_tasks_pending = self._tasks.pending_count()
             if self._active_tool_tasks or bg_tasks_pending > 0:
                 self._last_turn_activity = time.monotonic()
                 continue
@@ -1651,8 +1611,9 @@ class JarvisLive:
 
         try:
             from core.context_resolver import _default_roots
-            self._spawn_background_task(
+            self._tasks.spawn(
                 lambda: context_index.rebuild_index(_default_roots()),
+                asyncio.get_event_loop(),
                 task_name="context_index_boot",
             )
         except Exception as e:

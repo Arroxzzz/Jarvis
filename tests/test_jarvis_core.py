@@ -483,14 +483,13 @@ def test_provider_circuit_breaker_tracks_retry_window(monkeypatch):
 
 
 def test_background_panel_result_is_only_reinjected_once():
-    from main import JarvisLive
+    from core.background_tasks import BackgroundTaskTracker
 
-    live = object.__new__(JarvisLive)
-    live._panel_context_cache = {}
+    tracker = BackgroundTaskTracker()
 
-    first = live._panel_result_already_seen("SEARCH", "resultado ABC")
-    second = live._panel_result_already_seen("SEARCH", "resultado ABC")
-    third = live._panel_result_already_seen("SEARCH", "resultado XYZ")
+    first = tracker.result_already_seen("SEARCH", "resultado ABC")
+    second = tracker.result_already_seen("SEARCH", "resultado ABC")
+    third = tracker.result_already_seen("SEARCH", "resultado XYZ")
 
     assert first is False
     assert second is True

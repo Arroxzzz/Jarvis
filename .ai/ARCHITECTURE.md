@@ -27,7 +27,10 @@
 
 ## Estrutura principal
 
-- `main.py`: orquestração do fluxo principal e integração de memória/contexto.
+- `main.py`: orquestração do fluxo principal e integração de memória/contexto; delega o runtime de tasks ao tracker.
+- `core/background_tasks.py`: contador/lock de tasks em background e deduplicação/entrega de resultados no painel.
+- `core/knowledge_vault.py`: notas Markdown com WikiLinks automáticos, backlinks e busca contextual ponderada.
+- `core/context_index.py`: índice SQLite/FTS5 dos roots locais e dos arquivos Markdown do vault Obsidian.
 - `core/memory_policy.py`: política de gravação e classificação das lembranças.
 - `core/context_resolver.py`: resolução local de arquivos e contexto do projeto.
 - `core/knowledge_vault.py`: leitura e escrita no vault local.
@@ -36,4 +39,4 @@
 
 ## Estado operacional
 
-A linha de produto atual está estável e validada para uso real dentro do escopo seguro; qualquer expansão futura deve ser guiada por feedback prático e não por promessa de autonomia ampla.
+A linha de produto atual está estável e validada para uso real dentro do escopo seguro; as Fases 3, 4 e 5 foram concluídas sem alterar o caminho de áudio, e qualquer expansão futura deve ser guiada por feedback prático e não por promessa de autonomia ampla.

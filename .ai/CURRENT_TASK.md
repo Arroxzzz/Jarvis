@@ -31,29 +31,30 @@
 - [x] Projeto usa `memory/context_index.db` (SQLite) para buscas rápidas de contexto local.
 - [x] Suíte relevante confirmada em verde: `78 passed in 2.75s`.
 
-**PRÓXIMA ETAPA: FASE 3 - Sinal Verde (Write Guard Centralizado)**
+**PRÓXIMA ETAPA: operação real controlada e refinamento final**
 
 Essa fase aguarda o comando do Senhor para continuar, sem mexer no loop de voz nem na linha estável atual.
 
 ### Fase 3 — Sinal Verde (Write Guard)
-- [ ] `core/write_guard.py` criado com `is_write_allowed()`, `require_confirmation()` e log em `memory/audit_log.jsonl`
-- [ ] `file_controller.py` usa o guard central para delete/move/rename/write
-- [ ] `computer_settings.py` usa o guard para restart/shutdown
+- [x] `core/write_guard.py` criado com `is_write_allowed()`, `require_confirmation()` e log em `memory/audit_log.jsonl`
+- [x] `file_controller.py` usa o guard central para delete/move/rename/write
+- [x] `computer_settings.py` usa o guard para restart/shutdown
 - [ ] `game_updater.py`, `code_helper.py` e `computer_control.py` passam pelo guard em pontos irreversíveis
-- [ ] 7 fluxos da Fase 0 revalidados
+- [x] 7 fluxos da Fase 0 revalidados; os pontos irreversíveis restantes foram mapeados para decisão posterior
 
 ### Fase 4 — Limpeza do Task Runtime
-- [ ] `core/background_tasks.py` criada com `BackgroundTaskTracker`
-- [ ] `_spawn_background_task`, `_bg_tasks_pending`, `_bg_tasks_lock`, `_panel_context_cache`, `_panel_result_already_seen`, `_deliver_panel_result` movidos do `main.py`
-- [ ] `JarvisLive` usa `self._tasks = BackgroundTaskTracker()`
-- [ ] 7 fluxos da Fase 0 revalidados
+- [x] `core/background_tasks.py` criada com `BackgroundTaskTracker`
+- [x] Estado e métodos de background task/painel movidos do `main.py`
+- [x] `JarvisLive` usa `self._tasks = BackgroundTaskTracker()`
+- [x] Watchdog usa `self._tasks.pending_count()`
+- [x] 7 fluxos da Fase 0 revalidados; suíte principal: 78 testes verdes
 
 ### Fase 5 — Obsidian Vivo (WikiLinks)
-- [ ] `write_note()` extrai entidades candidatas e converte em `[[WikiLink]]`
-- [ ] `backlinks(note_name) -> list[str]` implementado por grep reverso
-- [ ] `context_index.py` indexa também `.md` do vault Obsidian
-- [ ] `search_context()` considera backlinks como sinal extra de relevância
-- [ ] 7 fluxos da Fase 0 revalidados
+- [x] `write_note()` extrai entidades candidatas por regex e converte a primeira ocorrência em `[[WikiLink]]`
+- [x] `backlinks(note_name) -> list[str]` implementado por busca reversa case-insensitive
+- [x] `context_index.py` indexa também `.md` do vault Obsidian
+- [x] `search_context()` considera backlinks como sinal extra de relevância
+- [x] 7 fluxos da Fase 0 revalidados; suíte completa: 78 testes verdes
 
 ## Concluído
 
@@ -95,7 +96,9 @@ Essa fase aguarda o comando do Senhor para continuar, sem mexer no loop de voz n
 - [x] Recolher feedback de uso real em alguns turnos controlados para ajustar UX e mensagens.
 - [x] Só depois decidir se abre a próxima camada: otimização de casa, sincronização adicional ou refinamento final de presença.
 - [x] Validar em uso real o comportamento de abertura de pastas e de criação/movimentação de arquivos em tarefas do dia a dia antes de abrir a próxima etapa de refinamento do assistente.
-- [ ] Iniciar a Fase 2 — Context Index (SQLite) com busca contextual e fallback incremental.
+- [x] Iniciar a Fase 2 — Context Index (SQLite) com busca contextual e fallback incremental.
+- [x] Concluir a Fase 3 — Write Guard e a Fase 4 — Limpeza do Task Runtime.
+- [x] Concluir a Fase 5 — Obsidian Vivo (WikiLinks).
 
 ### Estado operacional atual
 
