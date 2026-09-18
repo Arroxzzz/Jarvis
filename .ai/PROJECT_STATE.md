@@ -144,6 +144,19 @@ Free tier não significa SLA, disponibilidade contínua ou latência constante.
 - O modelo de plugins foi fechado em opt-in: qualquer plugin desconhecido ou de terceiro nasce desligado até habilitação explícita, evitando ativação silenciosa por descoberta automática.
 - A experiência de uso do assistente foi refinada para reduzir ruído de confirmação: ações não destrutivas seguem fluxo direto e só exclusão exige consentimento local.
 
+## Roadmap de refatoração aprovado
+
+O conjunto de trabalho foi reestruturado em 5 fases, com segurança de linha de produção e sem mexer no loop principal de áudio ou no contrato atual do assistente:
+
+1. Fase 0 — Rede de Segurança: baseline, tag, testes verdes e registro manual dos 7 fluxos.
+2. Fase 1 — Tool Registry: centralização das ferramentas em registry e redução do `if name == ...` do `main.py`.
+3. Fase 2 — Context Index (SQLite): busca contextual via FTS5 com fallback incremental e background job.
+4. Fase 3 — Sinal Verde (Write Guard): guard central para ações destrutivas e auditoria em `memory/audit_log.jsonl`.
+5. Fase 4 — Limpeza do Task Runtime: extração dos task trackers e cache de painel para classe dedicada.
+6. Fase 5 — Obsidian Vivo (WikiLinks): `[[WikiLink]]` automáticos, backlinks e indexação do vault em contexto.
+
+A ordem foi definida para preservar a linha produtiva atual e reduzir risco antes do refactor estrutural. O objetivo é controlar complexidade sem quebrar o funcionamento do Jarvis em uso real.
+
 ## Encerramento da fase atual
 
 A linha de produto atual está pronta para uso seguro no ambiente do Senhor. O próximo passo lógico é operação real e refinamento do comportamento, não expansão de escopo para autonomia ampla ou novas promessas de AGI.

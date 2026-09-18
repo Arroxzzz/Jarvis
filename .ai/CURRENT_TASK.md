@@ -1,5 +1,60 @@
 # CURRENT_TASK — ESTADO FINAL DA LINHA DE PRODUTO
 
+## Roadmap aprovado — fases 0 a 5
+
+### Fase 0 — Rede de Segurança
+- [x] `git tag v1-monolith-baseline`
+- [x] `python -m pytest tests/ -v` validado com 76 testes verdes
+- [x] `.ai/BASELINE_MANUAL.md` criado com os 7 fluxos manuais com resultado anotado
+- [x] Commit `chore: baseline pre-refactor` concluído
+
+### Fase 1 — Tool Registry
+- [x] `core/tool_registry.py` criado com `ToolSpec`, `_REGISTRY`, `@register_tool`, `get_declarations()` e `dispatch()`
+- [x] `open_app`, `weather_report` migrados para registro por decorator
+- [x] `browser_control`, `file_controller`, `open_on_monitor`, `send_message`, `reminder`, `youtube_video` migrados
+- [x] `computer_settings`, `desktop_control`, `code_helper`, `dev_agent`, `web_search`, `file_processor`, `computer_control`, `game_updater`, `flight_finder`, `system_status`, `deep_reasoning`, `manage_monitor` migrados
+- [x] Casos especiais mantidos fora do registry: `find_context`, `save_memory`, `knowledge_note`, `sync_memory`, `shutdown_jarvis`, `screen_process`, `close_camera`
+- [x] `_execute_tool_impl` reduzido para casos especiais + fallback do registry
+- [x] `TOOL_DECLARATIONS` derivado de `tool_registry.get_declarations()` com mescla dos casos especiais
+- [x] 7 fluxos da Fase 0 revalidados
+
+### Fase 2 — Context Index (SQLite)
+- [x] `core/context_index.py` criado com SQLite + FTS5, `rebuild_index()`, `query()`
+- [x] `core/context_resolver.py` usa `context_index.query()` com fallback para `rglob` quando o banco estiver vazio
+- [x] Indexação inicial em background no boot sem bloquear o Live connect
+- [x] Reindexação agendada a cada 15 minutos
+- [x] 7 fluxos da Fase 0 revalidados + latência do fluxo "ache o relatório final" registrada antes/depois
+
+### Estado de execução final
+- [x] Fases 0, 1 e 2 concluídas e validadas.
+- [x] Projeto usa `tool_registry` em vez de `if name == ...` no `main.py`.
+- [x] Projeto usa `memory/context_index.db` (SQLite) para buscas rápidas de contexto local.
+- [x] Suíte relevante confirmada em verde: `78 passed in 2.75s`.
+
+**PRÓXIMA ETAPA: FASE 3 - Sinal Verde (Write Guard Centralizado)**
+
+Essa fase aguarda o comando do Senhor para continuar, sem mexer no loop de voz nem na linha estável atual.
+
+### Fase 3 — Sinal Verde (Write Guard)
+- [ ] `core/write_guard.py` criado com `is_write_allowed()`, `require_confirmation()` e log em `memory/audit_log.jsonl`
+- [ ] `file_controller.py` usa o guard central para delete/move/rename/write
+- [ ] `computer_settings.py` usa o guard para restart/shutdown
+- [ ] `game_updater.py`, `code_helper.py` e `computer_control.py` passam pelo guard em pontos irreversíveis
+- [ ] 7 fluxos da Fase 0 revalidados
+
+### Fase 4 — Limpeza do Task Runtime
+- [ ] `core/background_tasks.py` criada com `BackgroundTaskTracker`
+- [ ] `_spawn_background_task`, `_bg_tasks_pending`, `_bg_tasks_lock`, `_panel_context_cache`, `_panel_result_already_seen`, `_deliver_panel_result` movidos do `main.py`
+- [ ] `JarvisLive` usa `self._tasks = BackgroundTaskTracker()`
+- [ ] 7 fluxos da Fase 0 revalidados
+
+### Fase 5 — Obsidian Vivo (WikiLinks)
+- [ ] `write_note()` extrai entidades candidatas e converte em `[[WikiLink]]`
+- [ ] `backlinks(note_name) -> list[str]` implementado por grep reverso
+- [ ] `context_index.py` indexa também `.md` do vault Obsidian
+- [ ] `search_context()` considera backlinks como sinal extra de relevância
+- [ ] 7 fluxos da Fase 0 revalidados
+
 ## Concluído
 
 - [x] Tela branca e recuperação da UI após minimizar/restaurar.
@@ -39,7 +94,8 @@
 - [x] Usar a linha de produto atual em operação real de rotina, sem expandir escopo.
 - [x] Recolher feedback de uso real em alguns turnos controlados para ajustar UX e mensagens.
 - [x] Só depois decidir se abre a próxima camada: otimização de casa, sincronização adicional ou refinamento final de presença.
-- [ ] Validar em uso real o comportamento de abertura de pastas e de criação/movimentação de arquivos em tarefas do dia a dia antes de abrir a próxima etapa de refinamento do assistente.
+- [x] Validar em uso real o comportamento de abertura de pastas e de criação/movimentação de arquivos em tarefas do dia a dia antes de abrir a próxima etapa de refinamento do assistente.
+- [ ] Iniciar a Fase 2 — Context Index (SQLite) com busca contextual e fallback incremental.
 
 ### Estado operacional atual
 

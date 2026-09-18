@@ -6,6 +6,8 @@ import platform
 from pathlib import Path
 from typing import Iterable
 
+from core import context_index
+
 
 def _normalize_text(value: str) -> str:
     return " ".join((value or "").strip().lower().split())
@@ -63,8 +65,25 @@ def find_context_candidates(query: str, roots: Iterable[str | os.PathLike[str]] 
     if not root_list:
         return []
 
+    if context_index.index_exists():
+        indexed = context_index.query(cleaned, max_results=max_results)
+        if indexed:
+            root_targets = [Path(root).resolve() for root in root_list]
+            relevant = []
+            for item in indexed:
+                candidate_path = Path(str(item.get("path") or ""))
+                if not candidate_path.exists():
+                    continue
+                resolved = candidate_path.resolve()
+                if any(resolved.is_relative_to(root) for root in root_targets):
+                    relevant.append(item)
+            if relevant:
+                print("[JARVIS] 📚 Context lookup via índice SQLite")
+                return relevant[:max_results]
+
     matches: list[dict] = []
 
+    print("[JARVIS] 📚 Context lookup via rglob fallback")
     for root in root_list:
         if not root.exists():
             continue

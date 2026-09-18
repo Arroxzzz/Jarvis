@@ -243,6 +243,22 @@ def test_context_resolver_flags_ambiguous_candidates(tmp_path):
     assert len(result["candidates"]) >= 2
 
 
+def test_context_index_builds_and_queries_files(tmp_path):
+    from core.context_index import index_exists, query, rebuild_index
+
+    root = tmp_path / "Desktop"
+    root.mkdir()
+    target = root / "relatorio_final_2026.pdf"
+    target.write_text("novo relatório", encoding="utf-8")
+
+    rebuild_index([root])
+
+    assert index_exists() is True
+    hits = query("relatorio final", max_results=5)
+    assert hits
+    assert hits[0]["name"] == "relatorio_final_2026.pdf"
+
+
 def test_infer_active_project_detects_local_repo(tmp_path):
     import core.context_resolver as ccr
 
@@ -305,6 +321,13 @@ def test_runtime_declares_context_tool():
 
     names = {tool["name"] for tool in main.TOOL_DECLARATIONS}
     assert "find_context" in names
+
+
+def test_tool_registry_declares_core_tools():
+    from core.tool_registry import get_declarations
+
+    names = {tool["name"] for tool in get_declarations()}
+    assert {"open_app", "weather_report", "web_search", "computer_settings", "file_controller"}.issubset(names)
 
 
 def test_active_window_title_uses_windows_api(monkeypatch):

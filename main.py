@@ -78,6 +78,7 @@ from core.plugin_loader        import discover_plugins
 from core.llm_client           import call_llm_text, get_openrouter_model, FREE_MODELS, gemini_call_resilient
 from core.async_tool_runner    import run_bounded as _bounded
 from core.async_tool_runner    import run_tool_bound as _run_tool_bound
+from core import context_index
 from core.runtime_constants    import (
     TZ_BR as _TZ_BR,
     LIVE_MODEL_FALLBACKS,
@@ -195,6 +196,7 @@ def _clean_transcript(text: str) -> str:
 
 
 from core.tool_declarations import TOOL_DECLARATIONS
+from core.tool_registry import dispatch_tool, get_declarations
 
 class JarvisLive:
 
@@ -599,7 +601,7 @@ class JarvisLive:
                 ),
             ),
             system_instruction="\n".join(parts),
-            tools=[{"function_declarations": TOOL_DECLARATIONS + self._plugin_registry.get_tool_declarations()}],
+            tools=[{"function_declarations": get_declarations() + self._plugin_registry.get_tool_declarations()}],
             session_resumption=types.SessionResumptionConfig(handle=self._resumption_handle),
             # Sliding-window compression: session never dies from a full context
             # window — JARVIS can stay in one conversation for hours
@@ -673,271 +675,23 @@ class JarvisLive:
 
     async def _handle_simple_tool_route(self, name: str, args: dict, loop) -> str | None:
         """Centralizes simple, time-bounded tools that can be run under a single helper."""
-        if name == "open_app":
-            return await _run_tool_bound(
-                lambda: open_app(parameters=args, response=None, player=self.ui),
-                20,
-                "open_app",
-                default=f"Opened {args.get('app_name')}.",
-            )
-
-        if name == "weather_report":
-            return await _run_tool_bound(
-                lambda: weather_action(parameters=args, player=self.ui),
-                20,
-                "weather_report",
-                default="Weather delivered.",
-            )
-
-        if name == "browser_control":
-            return await _run_tool_bound(
-                lambda: browser_control(parameters=args, player=self.ui),
-                25,
-                "browser_control",
-                default="Done.",
-            )
-
-        if name == "open_on_monitor":
-            from actions.browser_control import open_url_on_monitor
-            _service_urls = {
-                "gmail":     "https://mail.google.com",
-                "youtube":   "https://youtube.com",
-                "whatsapp":  "https://web.whatsapp.com",
-                "calendar":  "https://calendar.google.com",
-                "drive":     "https://drive.google.com",
-                "notion":    "https://notion.so",
-                "github":    "https://github.com",
-            }
-            _url = args.get("url") or _service_urls.get(
-                args.get("service", "").lower(), ""
-            )
-            if not _url:
-                return "Qual URL ou serviço deseja abrir, Senhor?"
-            return await _run_tool_bound(
-                lambda: open_url_on_monitor(_url, args.get("monitor", "secondary")),
-                15,
-                "open_on_monitor",
-                default="Não consegui abrir a URL no monitor solicitado, Senhor.",
-            )
-
-        if name == "file_controller":
-            return await _run_tool_bound(
-                lambda: file_controller(parameters=args, player=self.ui),
-                20,
-                "file_controller",
-                default="Done.",
-            )
-
-        if name == "open_folder":
-            from actions.file_controller import open_folder
-            return await _run_tool_bound(
-                lambda: open_folder(args.get("path", ""), confirmed=str(args.get("confirmed", "")).lower() in ("yes", "true", "1", "confirm")),
-                15,
-                "open_folder",
-                default="Pasta aberta.",
-            )
-
-        if name == "send_message":
-            return await _run_tool_bound(
-                lambda: send_message(parameters=args, response=None, player=self.ui, session_memory=None),
-                20,
-                "send_message",
-                default=f"Message sent to {args.get('receiver')}.",
-            )
-
-        if name == "reminder":
-            return await self._bounded(loop, lambda: reminder(parameters=args, response=None, player=self.ui), 20, "reminder")
-
-        if name == "youtube_video":
-            return await self._bounded(loop, lambda: youtube_video(parameters=args, response=None, player=self.ui), 25, "youtube_video")
-
+        registry_result = await dispatch_tool(name, args, loop=loop, jarvis=self, kind="simple")
+        if registry_result is not None:
+            return str(registry_result)
         return None
 
     async def _handle_advanced_tool_route(self, name: str, args: dict, loop) -> str:
         """Roteia ferramentas mais complexas para manter _execute_tool_impl menor e mais legível."""
+        registry_result = await dispatch_tool(name, args, loop=loop, jarvis=self, kind="advanced")
+        if registry_result is not None:
+            return str(registry_result)
+
         if name == "screen_process":
             return await self._handle_screen_process(args, loop)
 
         if name == "close_camera":
             self.ui.stop_camera_stream()
             return "Camera closed."
-
-        if name == "computer_settings":
-            return await self._bounded(loop, lambda: computer_settings(parameters=args, response=None, player=self.ui), 15, "computer_settings")
-
-        if name == "desktop_control":
-            return await self._bounded(loop, lambda: desktop_control(parameters=args, player=self.ui), 30, "desktop_control")
-
-        if name == "code_helper":
-            _desc = args.get("description", "") or "o código"
-            self.ui.write_log(f"SYS: 💻 Gerando código: {_desc[:60]}")
-            def _bg_code():
-                import concurrent.futures
-                try:
-                    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
-                        fut = ex.submit(code_helper, parameters=args,
-                                        player=self.ui, speak=None)
-                        try:
-                            r = fut.result(timeout=120)
-                        except concurrent.futures.TimeoutError:
-                            r = "Tempo limite atingido."
-                    self.ui.write_log(f"SYS: 💻 Código gerado — verifique o arquivo.")
-                    if r:
-                        _desc_ctx = args.get("description", "")
-                        _path_ctx = args.get("output_path", "área de trabalho")
-                        body = (
-                            f"Código gerado: '{_desc_ctx}'.\n"
-                            f"Arquivo salvo em: {_path_ctx}.\n\n{r[:1500]}"
-                        )
-                        self._deliver_panel_result(
-                            kind="CODE",
-                            label="CODE",
-                            payload=f"{_desc[:120]}::{r[:200]}",
-                            body=r[:500],
-                            context_prefix="CODE_CONTEXT",
-                        )
-                        if not self._panel_result_already_seen("CODE", f"{_desc[:120]}::{r[:200]}"):
-                            self._safe_send_content_threadsafe(
-                                f"[CODE_CONTEXT — não leia em voz alta, use como memória]\n"
-                                f"Código gerado: '{_desc_ctx}'.\n"
-                                f"Arquivo salvo em: {_path_ctx}.\n\n{r[:1500]}"
-                            )
-                finally:
-                    pass
-            self._spawn_background_task(_bg_code, task_name="code_helper")
-            return f"Criando o código agora, Senhor — {_desc[:60]}."
-
-        if name == "dev_agent":
-            _cancel_ev = threading.Event()
-            self._active_cancel_events.append(_cancel_ev)
-            try:
-                return await self._bounded(
-                    loop,
-                    lambda: dev_agent(parameters=args, player=self.ui, speak=self.speak, cancel_event=_cancel_ev),
-                    180, "dev_agent"
-                )
-            finally:
-                if _cancel_ev in self._active_cancel_events:
-                    self._active_cancel_events.remove(_cancel_ev)
-
-        if name == "web_search":
-            _mode = args.get("mode", "search")
-            _query = args.get("query") or ", ".join(args.get("items", []))
-            self.ui.write_log(f"SYS: 🔍 Pesquisando: {_query}")
-            def _bg_search():
-                r = web_search_action(parameters=args, player=self.ui)
-                if r and not r.startswith("No results") and not r.startswith("Search failed"):
-                    _label = f"{_mode.upper()} — {_query[:38]}" if _query else _mode.upper()
-                    self._deliver_panel_result(
-                        kind="SEARCH",
-                        label=_label,
-                        payload=f"{_query}::{r[:220]}",
-                        body=r,
-                        context_prefix="SEARCH_CONTEXT",
-                    )
-            self._spawn_background_task(_bg_search, task_name="web_search")
-            return f"Pesquisando sobre {_query}, Senhor." if _query else "Pesquisando, Senhor."
-
-        if name == "file_processor":
-            if not args.get("file_path") and self.ui.current_file:
-                args["file_path"] = self.ui.current_file
-            return await self._bounded(loop, lambda: file_processor(parameters=args, player=self.ui, speak=self.speak), 120, "file_processor")
-
-        if name == "computer_control":
-            return await self._bounded(loop, lambda: computer_control(parameters=args, player=self.ui), 20, "computer_control")
-
-        if name == "game_updater":
-            return await self._bounded(loop, lambda: game_updater(parameters=args, player=self.ui, speak=self.speak), 60, "game_updater")
-
-        if name == "flight_finder":
-            return await self._bounded(loop, lambda: flight_finder(parameters=args, player=self.ui), 60, "flight_finder")
-
-        if name == "system_status":
-            result = await _run_tool_bound(
-                get_system_status,
-                10,
-                "system_status",
-                default="Sistema indisponível no momento, Senhor.",
-            )
-            return str(result)
-
-        if name == "deep_reasoning":
-            query     = args.get("query", "")
-            task_type = args.get("task_type", "general").strip().lower()
-            if task_type not in FREE_MODELS:
-                task_type = "general"
-
-            def _ask_openrouter() -> str:
-                last_err = None
-                for model in FREE_MODELS[task_type]:
-                    try:
-                        return call_llm_text(
-                            query,
-                            system="Você é um especialista em raciocínio técnico. Responda em PT-BR, direto e completo.",
-                            model=model,
-                            timeout=25,
-                            force_provider="openrouter",
-                        )
-                    except Exception as e:
-                        last_err = e
-                        print(f"[DeepReasoning] {model} falhou: {e} — tentando próximo")
-                        continue
-                raise RuntimeError(f"Todos os modelos gratuitos falharam: {last_err}")
-
-            try:
-                r = await asyncio.wait_for(
-                    loop.run_in_executor(None, _ask_openrouter), timeout=80
-                )
-                return r or "Sem resposta do modelo de raciocínio."
-            except asyncio.TimeoutError:
-                return "deep_reasoning demorou demais e foi cancelado, Senhor. Tente novamente ou reformule a pergunta."
-            except Exception as e:
-                return f"deep_reasoning falhou, Senhor: {e}"
-
-        if name == "manage_monitor":
-            action = args.get("action", "").lower().strip()
-            topic  = args.get("topic", "").strip()
-            if action == "add" and topic:
-                return await _run_tool_bound(
-                    lambda: add_monitor(topic),
-                    10,
-                    "manage_monitor.add",
-                    default="Não consegui registrar o monitor, Senhor.",
-                )
-            if action == "remove" and topic:
-                return await _run_tool_bound(
-                    lambda: remove_monitor(topic),
-                    10,
-                    "manage_monitor.remove",
-                    default="Não consegui remover o monitor, Senhor.",
-                )
-            if action == "list":
-                result = await _run_tool_bound(
-                    list_monitors,
-                    10,
-                    "manage_monitor.list",
-                    default="Não consegui listar os monitores, Senhor.",
-                )
-                if isinstance(result, list):
-                    return ("Monitoring: " + ", ".join(result)) if result else "No topics are being monitored."
-                return str(result)
-            return "Specify action (add/remove/list) and a topic."
-
-        if name == "shutdown_jarvis":
-            self.ui.write_log("SYS: Shutdown requested.")
-            async def _do_shutdown():
-                await self._save_session_summary()
-                try:
-                    await self._safe_send_content(
-                        [{"text": "Say a brief natural goodbye to the user."}]
-                    )
-                except Exception:
-                    pass
-                await asyncio.sleep(1.5)
-                import os as _os
-                _os._exit(0)
-            asyncio.create_task(_do_shutdown())
-            return "Shutting down, Senhor."
 
         if self._plugin_registry.has(name):
             return await _run_tool_bound(
@@ -1718,6 +1472,23 @@ class JarvisLive:
                         print(f"[Monitor] ⚠️ Background check error: {e}")
             await asyncio.sleep(1800)     # check every 30 minutes
 
+    async def _run_context_reindex(self) -> None:
+        """Refresh the local file index every 15 minutes without blocking the main Live loop."""
+        await asyncio.sleep(5)
+        while True:
+            try:
+                roots = []
+                try:
+                    from core.context_resolver import _default_roots
+                    roots = _default_roots()
+                except Exception:
+                    roots = []
+                if roots:
+                    await asyncio.to_thread(context_index.rebuild_index, roots)
+            except Exception as e:
+                print(f"[ContextIndex] ⚠️ Reindex failed: {e}")
+            await asyncio.sleep(900)
+
     # ── Proactive mode ──────────────────────────────────────────────────────────
 
     async def _run_proactive_mode(self) -> None:
@@ -1826,6 +1597,7 @@ class JarvisLive:
         tg.create_task(self._play_audio())
         tg.create_task(self._run_system_monitor())
         tg.create_task(self._run_background_monitor())
+        tg.create_task(self._run_context_reindex())
         tg.create_task(
             listen_coulson(self.speak, self.ui.write_log, self._coulson_stop),
             name="coulson"
@@ -1876,6 +1648,15 @@ class JarvisLive:
             self.ui.set_mic_mode(False)
 
         await self._resolve_live_model()
+
+        try:
+            from core.context_resolver import _default_roots
+            self._spawn_background_task(
+                lambda: context_index.rebuild_index(_default_roots()),
+                task_name="context_index_boot",
+            )
+        except Exception as e:
+            print(f"[ContextIndex] ⚠️ Bootstrap index failed: {e}")
 
     def _flatten_err_text(self, exc: BaseException) -> str:
         """Converte ExceptionGroup em texto plano para diagnóstico de reconexão."""
