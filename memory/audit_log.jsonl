@@ -38,3 +38,15 @@
 {"ts": "2026-09-18T08:38:22.553077+00:00", "action": "delete", "target": "delete_me.txt", "allowed": true}
 {"ts": "2026-09-18T08:38:22.593175+00:00", "action": "move", "target": "origem.txt", "allowed": true}
 {"ts": "2026-09-18T08:38:22.608994+00:00", "action": "delete", "target": "lista.txt", "allowed": false}
+{"ts": "2026-09-20T00:29:59.130884+00:00", "action": "delete", "target": "delete_me.txt", "allowed": false}
+{"ts": "2026-09-20T00:29:59.417669+00:00", "action": "delete", "target": "delete_me.txt", "allowed": true}
+{"ts": "2026-09-20T00:29:59.474510+00:00", "action": "move", "target": "origem.txt", "allowed": true}
+{"ts": "2026-09-20T00:29:59.495622+00:00", "action": "delete", "target": "lista.txt", "allowed": false}
+{"ts": "2026-09-20T00:40:24.836523+00:00", "action": "delete", "target": "delete_me.txt", "allowed": false}
+{"ts": "2026-09-20T00:40:24.921615+00:00", "action": "delete", "target": "delete_me.txt", "allowed": true}
+{"ts": "2026-09-20T00:40:24.962031+00:00", "action": "move", "target": "origem.txt", "allowed": true}
+{"ts": "2026-09-20T00:40:24.979763+00:00", "action": "delete", "target": "lista.txt", "allowed": false}
+{"ts": "2026-09-20T01:46:32.659951+00:00", "action": "delete", "target": "delete_me.txt", "allowed": false}
+{"ts": "2026-09-20T01:46:32.748438+00:00", "action": "delete", "target": "delete_me.txt", "allowed": true}
+{"ts": "2026-09-20T01:46:32.797416+00:00", "action": "move", "target": "origem.txt", "allowed": true}
+{"ts": "2026-09-20T01:46:32.819794+00:00", "action": "delete", "target": "lista.txt", "allowed": false}

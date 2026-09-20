@@ -56,6 +56,13 @@ Essa fase aguarda o comando do Senhor para continuar, sem mexer no loop de voz n
 - [x] `search_context()` considera backlinks como sinal extra de relevância
 - [x] 7 fluxos da Fase 0 revalidados; suíte completa: 78 testes verdes
 
+### Fase 6 — Destinatário (Jarvis dos cinemas)
+- [x] S0 instrumentação (`memory/metrics.log`)
+- [ ] S1 baseline de 40 falas
+- [ ] S2 proactive audio nativo (`addressee_mode`, desacoplado de `_enhanced_live`, log explícito)
+- [ ] S3 latência do classificador (só se S2 falhar)
+- [ ] Fase 1 · Fase 2 (condicional) · Fase 3 tools · Fase 4 instabilidade por logs
+
 ## Concluído
 
 - [x] Tela branca e recuperação da UI após minimizar/restaurar.

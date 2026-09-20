@@ -31,6 +31,7 @@ if _platform.system() == "Windows":
 # ─────────────────────────────────────────────────────────────────────────────
 
 import asyncio
+import logging.handlers
 import re
 import threading
 import time
@@ -105,6 +106,16 @@ def get_base_dir():
 BASE_DIR        = get_base_dir()
 API_CONFIG_PATH = BASE_DIR / "config" / "api_keys.json"
 PROMPT_PATH     = BASE_DIR / "core" / "prompt.txt"
+
+_mlog = logging.getLogger("jarvis.metrics")
+_mlog.setLevel(logging.INFO)
+_mlog.propagate = False
+_mh = logging.handlers.RotatingFileHandler(
+    BASE_DIR / "memory" / "metrics.log", maxBytes=2_000_000, backupCount=1,
+    encoding="utf-8", delay=True)
+_mh.setFormatter(logging.Formatter("%(asctime)s %(message)s"))
+_mlog.addHandler(_mh)
+_SECRET_RE = re.compile(r"key=[^&\s'\"]+|AIza[0-9A-Za-z_\-]+")
 
 def _get_api_key() -> str:
     return _get_api_key_file(API_CONFIG_PATH)
@@ -231,6 +242,9 @@ class JarvisLive:
         self._metric_first_audio_received = False
         self._metric_first_audio_played = False
         self._audio_queue_last_metric = 0.0
+        self._turn_audio = 0
+        self._turn_tools = 0
+        self._audio_gaps = 0
         self._session_log: list[str] = []          # conversation turns for end-of-session summary
         self._active_tool_tasks: list[asyncio.Task] = []
         self._active_cancel_events: list[threading.Event] = []   # cancelamento cooperativo (dev_agent etc.)
@@ -274,11 +288,14 @@ class JarvisLive:
         self._metric_turn_started = time.monotonic()
         self._metric_first_audio_received = False
         self._metric_first_audio_played = False
-        print(f"[METRIC] turn_start id={self._metric_turn_id} source={source}")
+        self._metric("turn_start", id=self._metric_turn_id, source=source)
 
     def _metric(self, event: str, **fields) -> None:
         values = " ".join(f"{key}={value}" for key, value in fields.items())
-        print(f"[METRIC] {event}{(' ' + values) if values else ''}")
+        line = f"[METRIC] {event}{(' ' + values) if values else ''}"
+        print(line)
+        if event != "audio_queue":
+            _mlog.info(line)
 
     def _audio_queue_snapshot(self, side: str) -> dict[str, int | bool]:
         """Measures queue pressure before any buffer tuning. Intended for diagnostics only."""
@@ -950,6 +967,7 @@ class JarvisLive:
                         if self._interrupted:
                             pass  # discard: interrupted
                         else:
+                            self._turn_audio += 1
                             if self._turn_done_event and self._turn_done_event.is_set():
                                 self._turn_done_event.clear()
                             # Split into ~50 ms chunks so interrupt() stops audio within 50 ms
@@ -961,6 +979,12 @@ class JarvisLive:
 
                     if response.session_resumption_update and response.session_resumption_update.resumable:
                         self._resumption_handle = response.session_resumption_update.new_handle
+
+                    if getattr(response, "go_away", None):
+                        self._metric(
+                            "go_away",
+                            time_left=getattr(response.go_away, "time_left", None),
+                        )
 
                     if response.server_content:
                         sc = response.server_content
@@ -987,6 +1011,17 @@ class JarvisLive:
                                     ms=round((self._last_turn_activity - self._metric_turn_started) * 1000),
                                 )
                                 self._metric_turn_started = 0.0
+                            self._metric(
+                                "turn_result",
+                                result="tool" if self._turn_tools else ("audio" if self._turn_audio else "silence"),
+                                audio_chunks=self._turn_audio,
+                                tools=self._turn_tools,
+                                gaps=self._audio_gaps,
+                                model=self._current_live_model(),
+                                interrupted=self._interrupted,
+                                heard=repr(" ".join(in_buf)[:60]),
+                            )
+                            self._turn_audio = self._turn_tools = self._audio_gaps = 0
                             if self._turn_done_event:
                                 self._turn_done_event.set()
 
@@ -1014,6 +1049,7 @@ class JarvisLive:
 
                     if response.tool_call:
                         calls = response.tool_call.function_calls
+                        self._turn_tools += len(calls)
                         for fc in calls:
                             print(f"[JARVIS] 📞 {fc.name}")
                         # _pending_cancel_phrase pertence ao turno ANTERIOR
@@ -1130,6 +1166,8 @@ class JarvisLive:
                         self._metric("audio_queue", **snap)
                         self._audio_queue_last_metric = time.monotonic()
                     if self.audio_in_queue.empty():
+                        if self._is_speaking:
+                            self._audio_gaps += 1
                         self.set_speaking(False)
                     continue
 
@@ -1648,6 +1686,11 @@ class JarvisLive:
     async def _handle_reconnect_error(self, exc: BaseException) -> None:
         """Centraliza lógica de fallback do modelo e reconexão após falha da sessão."""
         err_str = self._flatten_err_text(exc)
+        self._metric(
+            "reconnect",
+            type=type(exc).__name__,
+            err=repr(_SECRET_RE.sub("***", err_str[:160])),
+        )
         print(f"[JARVIS] Error ({type(exc).__name__}): {exc}")
         traceback.print_exc()
 
@@ -1723,6 +1766,12 @@ class JarvisLive:
             self._prepare_session_state()
 
             print("[JARVIS] Connected.")
+            self._metric(
+                "connect",
+                model=_live_model,
+                enhanced=self._enhanced_live,
+                api="v1alpha" if self._enhanced_live else "v1beta",
+            )
             self.ui.set_state("LISTENING")
             if getattr(self, "_already_announced_online", False):
                 self.ui.clear_log()
