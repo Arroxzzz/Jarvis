@@ -470,6 +470,7 @@ class JarvisLive:
             if self._is_speaking == value:
                 return
             self._is_speaking = value
+        self._metric("speaking", on=value)
         if value:
             self.ui.set_state("SPEAKING")
         elif not self.ui.muted:
