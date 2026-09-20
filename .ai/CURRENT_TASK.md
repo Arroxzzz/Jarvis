@@ -58,10 +58,13 @@ Essa fase aguarda o comando do Senhor para continuar, sem mexer no loop de voz n
 
 ### Fase 6 — Destinatário (Jarvis dos cinemas)
 - [x] S0 instrumentação (`memory/metrics.log`)
-- [ ] S1 baseline de 40 falas
-- [ ] S2 proactive audio nativo (`addressee_mode`, desacoplado de `_enhanced_live`, log explícito)
-- [ ] S3 latência do classificador (só se S2 falhar)
-- [ ] Fase 1 · Fase 2 (condicional) · Fase 3 tools · Fase 4 instabilidade por logs
+- [x] S1 baseline (o Jarvis responde a tudo; sessão instável)
+- [x] S2 proactive audio nativo — FALHOU (respondeu a 100% das falas não dirigidas)
+- [x] S3 medição: transcrição chega antes do áudio (heard_late=0), folga ~1 s
+- [x] Fase 2a classificador `core/addressee.py` (isolado, com testes)
+- [ ] Fase 2b ligar ao Jarvis (segurar o áudio, descartar, HUD, log explícito)
+- [ ] Fase 2c teste em lotes
+- [ ] Fase 1 descartada (só valia se o S2 passasse) · Fase 3 tools · Fase 4 instabilidade por logs
 
 ## Concluído
 

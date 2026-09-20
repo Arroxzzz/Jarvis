@@ -449,6 +449,59 @@ def test_obfuscate_key_hides_filename():
     assert "itau" not in key
 
 
+def _fake_llm(resposta):
+    return lambda *a, **k: resposta
+
+
+def test_addressee_nome_explicito_nao_chama_llm(monkeypatch):
+    import core.addressee as ad
+
+    def _nao_deve_chamar(*a, **k):
+        raise AssertionError("LLM não deveria ser chamado")
+
+    monkeypatch.setattr(ad, "resilient_text_call", _nao_deve_chamar)
+    assert ad.classify_addressee("Jarvis, que horas são?") == "dirigida"
+    assert ad.classify_addressee("javis abre o navegador") == "dirigida"
+
+
+def test_addressee_resposta_sim(monkeypatch):
+    import core.addressee as ad
+
+    monkeypatch.setattr(ad, "resilient_text_call", _fake_llm("SIM"))
+    assert ad.classify_addressee("que horas são?") == "dirigida"
+
+
+def test_addressee_resposta_nao_com_acento(monkeypatch):
+    import core.addressee as ad
+
+    monkeypatch.setattr(ad, "resilient_text_call", _fake_llm("Não."))
+    assert ad.classify_addressee("acho que vou fazer um café") == "nao_dirigida"
+
+
+def test_addressee_falha_dos_provedores_retorna_none(monkeypatch):
+    import core.addressee as ad
+
+    msg = "Não foi possível obter resposta — todos os provedores gratuitos falharam, Senhor."
+    monkeypatch.setattr(ad, "resilient_text_call", _fake_llm(msg))
+    assert ad.classify_addressee("que horas são?") is None
+
+
+def test_addressee_excecao_retorna_none(monkeypatch):
+    import core.addressee as ad
+
+    def _boom(*a, **k):
+        raise RuntimeError("rede")
+
+    monkeypatch.setattr(ad, "resilient_text_call", _boom)
+    assert ad.classify_addressee("que horas são?") is None
+
+
+def test_addressee_texto_vazio_retorna_none():
+    import core.addressee as ad
+
+    assert ad.classify_addressee("   ") is None
+
+
 @pytest.mark.asyncio
 async def test_run_tool_bound_timeout_message():
     from main import _run_tool_bound

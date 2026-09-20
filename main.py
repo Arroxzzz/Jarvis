@@ -245,6 +245,8 @@ class JarvisLive:
         self._turn_audio = 0
         self._turn_tools = 0
         self._audio_gaps = 0
+        self._last_heard_at = 0.0
+        self._heard_late = 0
         self._session_log: list[str] = []          # conversation turns for end-of-session summary
         self._active_tool_tasks: list[asyncio.Task] = []
         self._active_cancel_events: list[threading.Event] = []   # cancelamento cooperativo (dev_agent etc.)
@@ -601,6 +603,8 @@ class JarvisLive:
             # comando (o modelo gerava uma resposta "proativa" via VAD interno
             # + uma resposta ao turno explícito do usuário).
             cfg["enable_affective_dialog"] = True
+            if _read_config().get("addressee_mode"):
+                cfg["proactivity"] = types.ProactivityConfig(proactive_audio=True)
         return types.LiveConnectConfig(**cfg)
 
     async def _execute_tool(self, fc) -> types.FunctionResponse:
@@ -964,6 +968,7 @@ class JarvisLive:
                                 "first_audio_received",
                                 id=self._metric_turn_id,
                                 ms=round((now - self._metric_turn_started) * 1000),
+                                since_heard=round((now - self._last_heard_at) * 1000) if self._last_heard_at else -1,
                             )
                         if self._interrupted:
                             pass  # discard: interrupted
@@ -1002,6 +1007,9 @@ class JarvisLive:
                                     self._metric_begin_turn("voice")
                                 in_buf.append(txt)
                                 self._last_user_speech = time.monotonic()
+                                self._last_heard_at = self._last_user_speech
+                                if self._metric_first_audio_received:
+                                    self._heard_late += 1
 
                         if sc.turn_complete:
                             self._last_turn_activity = time.monotonic()
@@ -1020,9 +1028,11 @@ class JarvisLive:
                                 gaps=self._audio_gaps,
                                 model=self._current_live_model(),
                                 interrupted=self._interrupted,
+                                heard_late=self._heard_late,
                                 heard=repr(" ".join(in_buf)[:60]),
                             )
                             self._turn_audio = self._turn_tools = self._audio_gaps = 0
+                            self._heard_late = 0
                             if self._turn_done_event:
                                 self._turn_done_event.set()
 
