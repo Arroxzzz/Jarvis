@@ -948,3 +948,47 @@ def test_dev_agent_mentor_mode_proposes_patch_without_applying_it():
     assert "Mentoria guiada" in result
     assert "Patch sugerido" in result
     assert "nenhuma alteração foi aplicada" in result.lower()
+
+
+def _live_addr(monkeypatch, verdict):
+    import main
+
+    class DummyUI:
+        muted = True
+
+        def write_log(self, *_a, **_k):
+            pass
+
+        def set_state(self, *_a, **_k):
+            pass
+
+    live = object.__new__(main.JarvisLive)
+    live.ui = DummyUI()
+    live._metric = lambda *a, **k: None
+    live._addr_enabled = True
+    live._addr_future = None
+    live._addr_text = ""
+    live._addr_timer = None
+    live._addr_verdict = None
+    live._addr_muted = False
+    live._addr_fail_streak = 0
+    monkeypatch.setattr(main, "classify_addressee", lambda text: verdict)
+    return live
+
+
+def test_addr_gate_descarta_fala_nao_dirigida(monkeypatch):
+    live = _live_addr(monkeypatch, "nao_dirigida")
+    assert asyncio.run(live._addr_gate("acho que vou fazer um café")) is True
+
+
+def test_addr_gate_deixa_passar_fala_dirigida_e_falha(monkeypatch):
+    live = _live_addr(monkeypatch, "dirigida")
+    assert asyncio.run(live._addr_gate("que horas são?")) is False
+    live = _live_addr(monkeypatch, None)
+    assert asyncio.run(live._addr_gate("que horas são?")) is False
+    assert live._addr_verdict == "indeterminado"
+
+
+def test_addr_gate_sem_texto_nao_bloqueia(monkeypatch):
+    live = _live_addr(monkeypatch, "nao_dirigida")
+    assert asyncio.run(live._addr_gate("   ")) is False

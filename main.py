@@ -209,6 +209,10 @@ def _clean_transcript(text: str) -> str:
 
 from core.tool_declarations import TOOL_DECLARATIONS
 from core.tool_registry import dispatch_tool, get_declarations
+from core.addressee import classify_addressee
+
+_ADDR_DEBOUNCE_S = 0.35   # pausa na transcrição antes de classificar a fala
+_ADDR_HOLD_S = 1.0        # espera máxima pelo veredito antes de deixar o áudio passar
 
 class JarvisLive:
 
@@ -247,6 +251,13 @@ class JarvisLive:
         self._audio_gaps = 0
         self._last_heard_at = 0.0
         self._heard_late = 0
+        self._addr_enabled = False
+        self._addr_future = None
+        self._addr_text = ""
+        self._addr_timer = None
+        self._addr_verdict = None     # veredito já decidido no turno atual
+        self._addr_muted = False      # True = descartar áudio e tools do turno atual
+        self._addr_fail_streak = 0
         self._session_log: list[str] = []          # conversation turns for end-of-session summary
         self._active_tool_tasks: list[asyncio.Task] = []
         self._active_cancel_events: list[threading.Event] = []   # cancelamento cooperativo (dev_agent etc.)
@@ -603,8 +614,6 @@ class JarvisLive:
             # comando (o modelo gerava uma resposta "proativa" via VAD interno
             # + uma resposta ao turno explícito do usuário).
             cfg["enable_affective_dialog"] = True
-            if _read_config().get("addressee_mode"):
-                cfg["proactivity"] = types.ProactivityConfig(proactive_audio=True)
         return types.LiveConnectConfig(**cfg)
 
     async def _execute_tool(self, fc) -> types.FunctionResponse:
@@ -951,6 +960,61 @@ class JarvisLive:
             print(f"[JARVIS] ❌ Mic: {e}")
             raise
 
+    def _addr_reset(self) -> None:
+        if self._addr_timer:
+            self._addr_timer.cancel()
+        self._addr_timer = None
+        self._addr_future = None
+        self._addr_text = ""
+        self._addr_verdict = None
+        self._addr_muted = False
+
+    def _addr_schedule(self, text: str) -> None:
+        """A cada fragmento de transcrição, (re)agenda a classificação após uma pausa."""
+        if not self._addr_enabled or self._addr_verdict is not None:
+            return
+        if self._addr_timer:
+            self._addr_timer.cancel()
+        self._addr_timer = asyncio.get_event_loop().call_later(
+            _ADDR_DEBOUNCE_S, self._addr_launch, text)
+
+    def _addr_launch(self, text: str) -> None:
+        self._addr_timer = None
+        if text and text != self._addr_text:
+            self._addr_text = text
+            self._addr_future = asyncio.ensure_future(
+                asyncio.to_thread(classify_addressee, text))
+
+    async def _addr_gate(self, text: str) -> bool:
+        """True = fala não dirigida ao Jarvis (descartar áudio e tools do turno)."""
+        if not self._addr_enabled or not text.strip():
+            return False
+        if self._addr_verdict is not None:
+            return self._addr_verdict == "nao_dirigida"
+        if self._addr_timer:
+            self._addr_timer.cancel()
+            self._addr_timer = None
+        if self._addr_future is None or text != self._addr_text:
+            self._addr_launch(text)
+        t0 = time.monotonic()
+        try:
+            verdict = await asyncio.wait_for(asyncio.shield(self._addr_future), _ADDR_HOLD_S)
+        except Exception:
+            verdict = None
+        ms = round((time.monotonic() - t0) * 1000)
+        if verdict is None:
+            self._addr_fail_streak += 1
+            if self._addr_fail_streak == 3:
+                self.ui.write_log(
+                    "SYS: ⚠️ Destinatário: classificador indisponível — o Jarvis responde a tudo até voltar.")
+        else:
+            if self._addr_fail_streak >= 3:
+                self.ui.write_log("SYS: Destinatário: classificador restabelecido.")
+            self._addr_fail_streak = 0
+        self._addr_verdict = verdict or "indeterminado"
+        self._metric("addressee", verdict=self._addr_verdict, ms=ms, heard=repr(text[:60]))
+        return verdict == "nao_dirigida"
+
     async def _receive_audio(self):
         print("[JARVIS] 👂 Recv started")
         out_buf, in_buf = [], []
@@ -974,11 +1038,14 @@ class JarvisLive:
                             pass  # discard: interrupted
                         else:
                             self._turn_audio += 1
+                            if self._addr_enabled and self._addr_verdict is None:
+                                if await self._addr_gate(" ".join(in_buf)):
+                                    self._addr_muted = True
                             if self._turn_done_event and self._turn_done_event.is_set():
                                 self._turn_done_event.clear()
                             # Split into ~50 ms chunks so interrupt() stops audio within 50 ms
                             # (24000 Hz × 2 bytes/sample × 0.05 s = 2400 bytes per slice)
-                            _audio_data = response.data
+                            _audio_data = b"" if self._addr_muted else response.data
                             _SLICE = 2400
                             for _i in range(0, len(_audio_data), _SLICE):
                                 self._enqueue_received_audio(_audio_data[_i : _i + _SLICE])
@@ -1010,6 +1077,7 @@ class JarvisLive:
                                 self._last_heard_at = self._last_user_speech
                                 if self._metric_first_audio_received:
                                     self._heard_late += 1
+                                self._addr_schedule(" ".join(in_buf))
 
                         if sc.turn_complete:
                             self._last_turn_activity = time.monotonic()
@@ -1029,10 +1097,13 @@ class JarvisLive:
                                 model=self._current_live_model(),
                                 interrupted=self._interrupted,
                                 heard_late=self._heard_late,
+                                muted=self._addr_muted,
                                 heard=repr(" ".join(in_buf)[:60]),
                             )
                             self._turn_audio = self._turn_tools = self._audio_gaps = 0
                             self._heard_late = 0
+                            _mutado = self._addr_muted
+                            self._addr_reset()
                             if self._turn_done_event:
                                 self._turn_done_event.set()
 
@@ -1051,10 +1122,15 @@ class JarvisLive:
                             in_buf = []
 
                             full_out = " ".join(out_buf).strip()
-                            if full_out:
+                            if full_out and not _mutado:
                                 self.ui.write_log(f"{self._asst_name}: {full_out}")
                                 self._session_log.append(f"{self._asst_name}: {full_out}")
                             out_buf = []
+                            if _mutado:
+                                self.ui.write_log("SYS: Fala não dirigida — ignorada.")
+                                self.ui.set_state("THINKING")
+                                asyncio.get_event_loop().call_later(
+                                    0.6, lambda: None if self.ui.muted else self.ui.set_state("LISTENING"))
 
                             await self._handle_vision_turn_complete()
 
@@ -1063,6 +1139,17 @@ class JarvisLive:
                         self._turn_tools += len(calls)
                         for fc in calls:
                             print(f"[JARVIS] 📞 {fc.name}")
+                        if self._addr_enabled and self._addr_verdict is None:
+                            if await self._addr_gate(" ".join(in_buf)):
+                                self._addr_muted = True
+                        if self._addr_muted:
+                            await self._safe_send_tool_response([
+                                types.FunctionResponse(
+                                    id=fc.id, name=fc.name,
+                                    response={"result": "Ignorado: fala não dirigida ao Jarvis."})
+                                for fc in calls
+                            ])
+                            continue
                         # _pending_cancel_phrase pertence ao turno ANTERIOR
                         # (interrupção antes do comando atual). Limpar aqui
                         # garante que ele não seja injetado no meio de um
@@ -1653,6 +1740,8 @@ class JarvisLive:
         self._vision_last_time = 0.0
         self._interrupted = False
         self._last_turn_activity = time.monotonic()
+        self._addr_enabled = bool(_read_config().get("addressee_mode"))
+        self._addr_reset()
 
     def _create_live_client(self) -> genai.Client:
         """Centraliza a criação do client Gemini para o loop de sessão."""
@@ -1790,6 +1879,8 @@ class JarvisLive:
             else:
                 self.ui.write_log("SYS: JARVIS online.")
                 self._already_announced_online = True
+            self.ui.write_log(
+                "SYS: Destinatário " + ("ATIVO (filtro por IA gratuita)." if self._addr_enabled else "DESLIGADO."))
             if not self._boot_greeted:
                 pass
             else:

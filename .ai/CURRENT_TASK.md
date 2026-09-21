@@ -62,7 +62,7 @@ Essa fase aguarda o comando do Senhor para continuar, sem mexer no loop de voz n
 - [x] S2 proactive audio nativo — FALHOU (respondeu a 100% das falas não dirigidas)
 - [x] S3 medição: transcrição chega antes do áudio (heard_late=0), folga ~1 s
 - [x] Fase 2a classificador `core/addressee.py` (isolado, com testes)
-- [ ] Fase 2b ligar ao Jarvis (segurar o áudio, descartar, HUD, log explícito)
+- [x] Fase 2b ligar ao Jarvis (segurar o áudio, descartar, HUD, log explícito)
 - [ ] Fase 2c teste em lotes
 - [ ] Fase 1 descartada (só valia se o S2 passasse) · Fase 3 tools · Fase 4 instabilidade por logs
 
