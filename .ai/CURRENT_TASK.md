@@ -58,13 +58,26 @@ Essa fase aguarda o comando do Senhor para continuar, sem mexer no loop de voz n
 
 ### Fase 6 — Destinatário (Jarvis dos cinemas)
 - [x] S0 instrumentação (`memory/metrics.log`)
-- [x] S1 baseline (o Jarvis responde a tudo; sessão instável)
-- [x] S2 proactive audio nativo — FALHOU (respondeu a 100% das falas não dirigidas)
-- [x] S3 medição: transcrição chega antes do áudio (heard_late=0), folga ~1 s
-- [x] Fase 2a classificador `core/addressee.py` (isolado, com testes)
-- [x] Fase 2b ligar ao Jarvis (segurar o áudio, descartar, HUD, log explícito)
-- [ ] Fase 2c teste em lotes
-- [ ] Fase 1 descartada (só valia se o S2 passasse) · Fase 3 tools · Fase 4 instabilidade por logs
+- [x] S0b instrumentação (`speaking on/off`)
+- [x] S1 baseline (falas não dirigidas quase sempre respondidas; sessão instável em parte do teste)
+- [x] Triagem por log: H1 (limite de conexão) e H2 (cota/429) SEM evidência (só 1 erro `1011 Internal error` do servidor em 34 min); H4 (alias `-latest`) inconclusivo
+- [x] S2 proactive audio nativo — IMPLEMENTADO e TESTADO — FALHOU (respondeu a praticamente todas as falas não dirigidas)
+- [x] S3 medição: transcrição chega antes do áudio (heard_late=0), folga ~1s vs. ~0,5s do classificador — plano B viável
+- [x] Fase 2a — `core/addressee.py` (classify_addressee via Groq/OpenRouter), 6 testes, validado manualmente
+- [x] Fase 2b — gate ligado ao `main.py` (1ª tentativa divergiu do spec — usava buffer de áudio, causava Jarvis mudo ao abrir + resposta atrasada 1 turno; revertida e refeita sem buffer, conforme spec)
+- [x] Fase 2b — teste rápido de 3 frases com `addressee_mode=true`: 3/3 corretas
+- [x] Fase 2b-fix — bug achado e corrigido: o gate bloqueava o loop de recepção de áudio por até 1s, fazendo respostas não tocarem mesmo com veredito certo. Corrigido: caminho de áudio agora é não-bloqueante (fail-open); caminho de tools continua bloqueante (seguro). `enable_affective_dialog` removido a pedido do Senhor.
+- [x] 87 testes passando (`python -m pytest tests/ -v`)
+- [ ] Fase 2c — reteste de voz com o fix aplicado: refazer Grupo 1 (10 falas — a rodada anterior foi ANTES do fix e não é confiável), depois Grupos 2, 3 e 4. Protocolo: lotes de 10 falas / 5 min, reiniciar antes de cada lote, portão de saúde com falas sem tool, descartar lote se aparecer "Resposta lenta" ou fala sem tool > 8s. Aprovação: ≤2 falsos positivos e ≤1 falso negativo em 20 falas de cada tipo, 0 respostas duplas.
+- [ ] Fase 3 — tools: `core/tool_registry.py::dispatch_tool` engole exceções (retorna "Unknown tool" em vez do erro real); falta parâmetro de monitor em `open_on_monitor`/`open_app` (ex. real: "abre o Brave no monitor secundário" abriu no principal)
+- [ ] Fase 4 — instabilidade: ver H5/H6 e qualidade de transcrição abaixo
+- [x] Fase 1 (nativo + fallback de modelo) formalmente descartada — só valia se o S2 tivesse passado
+
+#### Achados novos da Fase 6 (fora do escopo original)
+
+- **H5 — bug no watchdog** (`main.py::_turn_watchdog`): após forçar reset de turno travado, `_turn_done_event` é marcado concluído e o contador de tentativas é zerado na passada seguinte. Na prática nunca chega a 5/5, então a reconexão completa (pensada para travamento persistente) nunca dispara. Não corrigido.
+- **H6 — suspeita de microfone preso**: num travamento do S1, `heard=''` por ~1m40s, sugerindo captura fechada (`_is_speaking` preso em `True`) durante a queda. Não confirmado — cruzar com a métrica `speaking` (já instrumentada) no próximo travamento real.
+- **Qualidade de transcrição (achado novo)**: a transcrição de entrada do Gemini erra com frequência mesmo com fala clara — ex. real: "Jarvis, que horas são?" → "Já rve, que horas são?"; "Quanto é 17 x 23" → "Quando quer 17 x 23". HIPÓTESE NÃO CONFIRMADA: falta de tratamento de áudio (ruído/ganho) em `main.py::_listen_audio`, que envia PCM cru ao Gemini sem pré-processamento local. Pode afetar o classificador (quando "Jarvis" não é pego pela regex) e a execução de tools. Não investigado — candidato a virar prioridade própria.
 
 ## Concluído
 
