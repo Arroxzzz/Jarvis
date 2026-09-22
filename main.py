@@ -608,12 +608,6 @@ class JarvisLive:
                 )
             ),
         )
-        if self._enhanced_live:
-            # Affective dialog: JARVIS hears tone/emotion and adapts its voice.
-            # Proactive audio DESATIVADO — causava resposta dupla ao mesmo
-            # comando (o modelo gerava uma resposta "proativa" via VAD interno
-            # + uma resposta ao turno explícito do usuário).
-            cfg["enable_affective_dialog"] = True
         return types.LiveConnectConfig(**cfg)
 
     async def _execute_tool(self, fc) -> types.FunctionResponse:
@@ -1039,8 +1033,16 @@ class JarvisLive:
                         else:
                             self._turn_audio += 1
                             if self._addr_enabled and self._addr_verdict is None:
-                                if await self._addr_gate(" ".join(in_buf)):
-                                    self._addr_muted = True
+                                self._addr_schedule(" ".join(in_buf))
+                                if self._addr_future and self._addr_future.done():
+                                    try:
+                                        v = self._addr_future.result()
+                                    except Exception:
+                                        v = None
+                                    self._addr_verdict = v or "indeterminado"
+                                    self._metric("addressee", verdict=self._addr_verdict, ms=0, heard=repr(" ".join(in_buf)[:60]))
+                                    if v == "nao_dirigida":
+                                        self._addr_muted = True
                             if self._turn_done_event and self._turn_done_event.is_set():
                                 self._turn_done_event.clear()
                             # Split into ~50 ms chunks so interrupt() stops audio within 50 ms
