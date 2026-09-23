@@ -4,7 +4,9 @@ TOOL_DECLARATIONS = [
         "description": (
             "Opens any application on the computer. "
             "Use this whenever the user asks to open, launch, or start any app, "
-            "website, or program. Always call this tool — never just say you opened it."
+            "website, or program. Always call this tool — never just say you opened it. "
+            "If the user specifies a monitor (e.g. 'no monitor secundário', 'na TV'), "
+            "pass the monitor parameter."
         ),
         "parameters": {
             "type": "OBJECT",
@@ -12,6 +14,10 @@ TOOL_DECLARATIONS = [
                 "app_name": {
                     "type": "STRING",
                     "description": "Exact name of the application (e.g. 'WhatsApp', 'Chrome', 'Spotify')"
+                },
+                "monitor": {
+                    "type": "STRING",
+                    "description": "Monitor to open the app on: 'primary' | 'secondary' | 'tv'. Omit if not specified."
                 }
             },
             "required": ["app_name"]

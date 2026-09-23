@@ -13,8 +13,8 @@
 
 ## Fronteiras ativas
 
-- `main.py::_receive_audio` ganhou um filtro de destinatário opcional (`addressee_mode`, `core/addressee.py`): decide se descarta áudio/tools de um turno. Checagem no caminho de áudio é não-bloqueante (fail-open); no caminho de tools é bloqueante (até 1s, seguro pois não há áudio em voo ali). Watchdog de reconexão (`_turn_watchdog`) tem bug conhecido: o contador de tentativas nunca atinge o limite que forçaria reconexão completa.
-- O caminho principal de áudio continua isolado e não foi expandido por esta fase.
+- Canal de áudio com Gemini Live opera diretamente sem intermediários ou filtros de destinatário descartados. Watchdog de reconexão (`_turn_watchdog`) tem bug conhecido (H5): o contador de tentativas nunca atinge o limite que forçaria reconexão completa.
+- O caminho principal de áudio é direto e não possui mordaças artificiais.
 - As decisões de memória e contexto saem do fluxo principal de voz com confirmação e escopo controlado.
 - A camada de produção atual é a linha segura: assistente pessoal + contexto + memória + diagnóstico guiado + plugins opt-in.
 - O schema do Live session permanece imutável após `LiveConnectConfig`; liga/desliga de plugins afeta o próximo build do schema e não reconfigura a sessão ativa.

@@ -56,22 +56,10 @@ Essa fase aguarda o comando do Senhor para continuar, sem mexer no loop de voz n
 - [x] `search_context()` considera backlinks como sinal extra de relevância
 - [x] 7 fluxos da Fase 0 revalidados; suíte completa: 78 testes verdes
 
-### Fase 6 — Destinatário (Jarvis dos cinemas)
-- [x] S0 instrumentação (`memory/metrics.log`)
-- [x] S0b instrumentação (`speaking on/off`)
-- [x] S1 baseline (falas não dirigidas quase sempre respondidas; sessão instável em parte do teste)
-- [x] Triagem por log: H1 (limite de conexão) e H2 (cota/429) SEM evidência (só 1 erro `1011 Internal error` do servidor em 34 min); H4 (alias `-latest`) inconclusivo
-- [x] S2 proactive audio nativo — IMPLEMENTADO e TESTADO — FALHOU (respondeu a praticamente todas as falas não dirigidas)
-- [x] S3 medição: transcrição chega antes do áudio (heard_late=0), folga ~1s vs. ~0,5s do classificador — plano B viável
-- [x] Fase 2a — `core/addressee.py` (classify_addressee via Groq/OpenRouter), 6 testes, validado manualmente
-- [x] Fase 2b — gate ligado ao `main.py` (1ª tentativa divergiu do spec — usava buffer de áudio, causava Jarvis mudo ao abrir + resposta atrasada 1 turno; revertida e refeita sem buffer, conforme spec)
-- [x] Fase 2b — teste rápido de 3 frases com `addressee_mode=true`: 3/3 corretas
-- [x] Fase 2b-fix — bug achado e corrigido: o gate bloqueava o loop de recepção de áudio por até 1s, fazendo respostas não tocarem mesmo com veredito certo. Corrigido: caminho de áudio agora é não-bloqueante (fail-open); caminho de tools continua bloqueante (seguro). `enable_affective_dialog` removido a pedido do Senhor.
-- [x] 87 testes passando (`python -m pytest tests/ -v`)
-- [ ] Fase 2c — reteste de voz com o fix aplicado: refazer Grupo 1 (10 falas — a rodada anterior foi ANTES do fix e não é confiável), depois Grupos 2, 3 e 4. Protocolo: lotes de 10 falas / 5 min, reiniciar antes de cada lote, portão de saúde com falas sem tool, descartar lote se aparecer "Resposta lenta" ou fala sem tool > 8s. Aprovação: ≤2 falsos positivos e ≤1 falso negativo em 20 falas de cada tipo, 0 respostas duplas.
-- [ ] Fase 3 — tools: `core/tool_registry.py::dispatch_tool` engole exceções (retorna "Unknown tool" em vez do erro real); falta parâmetro de monitor em `open_on_monitor`/`open_app` (ex. real: "abre o Brave no monitor secundário" abriu no principal)
-- [ ] Fase 4 — instabilidade: ver H5/H6 e qualidade de transcrição abaixo
-- [x] Fase 1 (nativo + fallback de modelo) formalmente descartada — só valia se o S2 tivesse passado
+### Fase 6 — Destinatário (DESCARTADA / REMOVIDA EM DEFINITIVO)
+- [x] Filtro de endereçamento artificial (`core/addressee.py`, `_addr_*` no `main.py`, config `addressee_mode` e testes) completamente REMOVIDO por decisão do Senhor. O filtro causava atrasos de turno, mutava respostas legítimas e induzia estados fantasmas de surdez no microfone.
+- [x] Fase 3 — tools: `core/tool_registry.py::dispatch_tool` corrigido para logar e retornar erro detalhado em vez de engolir exceções; `open_app` e schema em `core/tool_declarations.py` atualizados com suporte ao parâmetro `monitor` (posicionamento via `_move_to_monitor`).
+- [ ] Próxima frente: Diagnóstico e estabilização direta da captura de áudio / microfone (`underrun` no sounddevice) e watchdog de turno (H5).
 
 #### Achados novos da Fase 6 (fora do escopo original)
 

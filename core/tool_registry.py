@@ -257,7 +257,13 @@ async def dispatch_tool(name: str, args: dict, *, loop, jarvis=None, kind: str |
             if asyncio.iscoroutine(result):
                 return await result
             return result
-        except Exception:
-            return None
-    except Exception:
-        return None
+        except Exception as _e:
+            import traceback as _tb
+            print(f"[tool_registry] ❌ {name} falhou (fallback de assinatura): {_e}")
+            _tb.print_exc()
+            return f"Erro interno ao executar {name}, Senhor: {_e}"
+    except Exception as _e:
+        import traceback as _tb
+        print(f"[tool_registry] ❌ {name} falhou: {_e}")
+        _tb.print_exc()
+        return f"Erro interno ao executar {name}, Senhor: {_e}"

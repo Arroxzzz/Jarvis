@@ -3,6 +3,28 @@ import subprocess
 import platform
 import shutil
 
+
+def _move_to_monitor(window_title_fragment: str, monitor: str) -> bool:
+    """Move a janela recém-aberta para o monitor especificado.
+    Usa pygetwindow se disponível. Fail-safe: retorna False sem lançar exceção."""
+    try:
+        import pygetwindow as gw
+        from core.paths import get_monitor_position
+        x, y = get_monitor_position(monitor)
+        import time as _t
+        # Aguarda até 4s para a janela aparecer
+        for _ in range(8):
+            wins = [w for w in gw.getAllWindows()
+                    if window_title_fragment.lower() in (w.title or "").lower() and w.width > 0]
+            if wins:
+                w = wins[0]
+                w.moveTo(x, y)
+                return True
+            _t.sleep(0.5)
+    except Exception as _e:
+        print(f"[open_app] ⚠️ Não foi possível mover para monitor '{monitor}': {_e}")
+    return False
+
 try:
     import psutil
     _PSUTIL = True
@@ -243,7 +265,9 @@ def open_app(
     player=None,
     session_memory=None,
 ) -> str:
-    app_name = (parameters or {}).get("app_name", "").strip()
+    params   = parameters or {}
+    app_name = params.get("app_name", "").strip()
+    monitor  = (params.get("monitor") or "").strip().lower() or None
 
     if not app_name:
         return "No application name provided."
@@ -253,21 +277,30 @@ def open_app(
         return f"Unsupported operating system: {_SYSTEM}"
 
     normalized = _normalize(app_name)
-    print(f"[open_app] Launching: '{app_name}' → '{normalized}' ({_SYSTEM})")
+    print(f"[open_app] Launching: '{app_name}' → '{normalized}' ({_SYSTEM})"
+          + (f" → monitor={monitor}" if monitor else ""))
 
     if player:
-        player.write_log(f"[open_app] {app_name}")
+        player.write_log(f"[open_app] {app_name}" + (f" [{monitor}]" if monitor else ""))
 
     try:
-        if launcher(normalized):
-            return f"Opened {app_name}."
-        if normalized.lower() != app_name.lower():
-            if launcher(app_name):
-                return f"Opened {app_name}."
-        return (
-            f"Could not confirm that {app_name} launched. "
-            f"It may still be loading, or it might not be installed."
-        )
+        launched = launcher(normalized)
+        if not launched and normalized.lower() != app_name.lower():
+            launched = launcher(app_name)
+
+        if not launched:
+            return (
+                f"Could not confirm that {app_name} launched. "
+                f"It may still be loading, or it might not be installed."
+            )
+
+        # Se monitor foi solicitado, tenta mover a janela
+        if monitor and monitor != "primary":
+            moved = _move_to_monitor(app_name, monitor)
+            suffix = f" no monitor {monitor}" if moved else f" (monitor {monitor} não pôde ser aplicado)"
+            return f"Opened {app_name}{suffix}."
+        return f"Opened {app_name}."
+
     except Exception as e:
         print(f"[open_app] Error: {e}")
         return f"Failed to open {app_name}: {e}"

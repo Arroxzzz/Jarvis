@@ -449,57 +449,6 @@ def test_obfuscate_key_hides_filename():
     assert "itau" not in key
 
 
-def _fake_llm(resposta):
-    return lambda *a, **k: resposta
-
-
-def test_addressee_nome_explicito_nao_chama_llm(monkeypatch):
-    import core.addressee as ad
-
-    def _nao_deve_chamar(*a, **k):
-        raise AssertionError("LLM não deveria ser chamado")
-
-    monkeypatch.setattr(ad, "resilient_text_call", _nao_deve_chamar)
-    assert ad.classify_addressee("Jarvis, que horas são?") == "dirigida"
-    assert ad.classify_addressee("javis abre o navegador") == "dirigida"
-
-
-def test_addressee_resposta_sim(monkeypatch):
-    import core.addressee as ad
-
-    monkeypatch.setattr(ad, "resilient_text_call", _fake_llm("SIM"))
-    assert ad.classify_addressee("que horas são?") == "dirigida"
-
-
-def test_addressee_resposta_nao_com_acento(monkeypatch):
-    import core.addressee as ad
-
-    monkeypatch.setattr(ad, "resilient_text_call", _fake_llm("Não."))
-    assert ad.classify_addressee("acho que vou fazer um café") == "nao_dirigida"
-
-
-def test_addressee_falha_dos_provedores_retorna_none(monkeypatch):
-    import core.addressee as ad
-
-    msg = "Não foi possível obter resposta — todos os provedores gratuitos falharam, Senhor."
-    monkeypatch.setattr(ad, "resilient_text_call", _fake_llm(msg))
-    assert ad.classify_addressee("que horas são?") is None
-
-
-def test_addressee_excecao_retorna_none(monkeypatch):
-    import core.addressee as ad
-
-    def _boom(*a, **k):
-        raise RuntimeError("rede")
-
-    monkeypatch.setattr(ad, "resilient_text_call", _boom)
-    assert ad.classify_addressee("que horas são?") is None
-
-
-def test_addressee_texto_vazio_retorna_none():
-    import core.addressee as ad
-
-    assert ad.classify_addressee("   ") is None
 
 
 @pytest.mark.asyncio
@@ -949,46 +898,3 @@ def test_dev_agent_mentor_mode_proposes_patch_without_applying_it():
     assert "Patch sugerido" in result
     assert "nenhuma alteração foi aplicada" in result.lower()
 
-
-def _live_addr(monkeypatch, verdict):
-    import main
-
-    class DummyUI:
-        muted = True
-
-        def write_log(self, *_a, **_k):
-            pass
-
-        def set_state(self, *_a, **_k):
-            pass
-
-    live = object.__new__(main.JarvisLive)
-    live.ui = DummyUI()
-    live._metric = lambda *a, **k: None
-    live._addr_enabled = True
-    live._addr_future = None
-    live._addr_text = ""
-    live._addr_timer = None
-    live._addr_verdict = None
-    live._addr_muted = False
-    live._addr_fail_streak = 0
-    monkeypatch.setattr(main, "classify_addressee", lambda text: verdict)
-    return live
-
-
-def test_addr_gate_descarta_fala_nao_dirigida(monkeypatch):
-    live = _live_addr(monkeypatch, "nao_dirigida")
-    assert asyncio.run(live._addr_gate("acho que vou fazer um café")) is True
-
-
-def test_addr_gate_deixa_passar_fala_dirigida_e_falha(monkeypatch):
-    live = _live_addr(monkeypatch, "dirigida")
-    assert asyncio.run(live._addr_gate("que horas são?")) is False
-    live = _live_addr(monkeypatch, None)
-    assert asyncio.run(live._addr_gate("que horas são?")) is False
-    assert live._addr_verdict == "indeterminado"
-
-
-def test_addr_gate_sem_texto_nao_bloqueia(monkeypatch):
-    live = _live_addr(monkeypatch, "nao_dirigida")
-    assert asyncio.run(live._addr_gate("   ")) is False
