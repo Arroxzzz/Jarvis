@@ -72,6 +72,44 @@ def list_notes() -> list[str]:
     return sorted(p.relative_to(KNOWLEDGE_DIR).with_suffix("").as_posix() for p in KNOWLEDGE_DIR.rglob("*.md"))
 
 
+def build_boot_digest(max_results: int = 5, max_chars: int = 1500) -> str:
+    """Monta um resumo curto das notas mais recentes do vault."""
+    notes = []
+    for path in KNOWLEDGE_DIR.rglob("*.md"):
+        try:
+            text = path.read_text(encoding="utf-8", errors="ignore")
+            lines = text.splitlines()
+            if lines and lines[0].startswith("# "):
+                lines = lines[1:]
+            snippet = " ".join(lines).strip()[:200]
+            notes.append((
+                path,
+                snippet,
+                path.stat().st_mtime,
+                len(backlinks(path.stem)),
+            ))
+        except Exception:
+            continue
+
+    if not notes:
+        return ""
+
+    notes.sort(key=lambda item: (item[2], item[3]), reverse=True)
+    header = "[MEMÓRIA RECENTE DO VAULT — use com naturalidade, nunca recite como lista]\n"
+    result = header
+    for path, snippet, _mtime, _backlinks in notes[:max_results]:
+        item = f"- {path.stem}: {snippet}...\n"
+        if len(result) + len(item) > max_chars:
+            break
+        result += item
+
+    if result == header:
+        return ""
+    if len(result) > max_chars:
+        result = result[:max_chars - 1] + "…"
+    return result
+
+
 def search_notes(query: str, max_results: int = 5) -> str:
     """Busca textual simples (grep) — sem embeddings, leve e gratuito."""
     query_low = query.lower()

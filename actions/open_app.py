@@ -1,3 +1,4 @@
+import os
 import time
 import subprocess
 import platform
@@ -100,40 +101,22 @@ def _normalize(raw: str) -> str:
     return raw  
 
 def _launch_windows(app_name: str) -> bool:
-
-    if shutil.which(app_name) or shutil.which(app_name.split(".")[0]):
-        try:
-            subprocess.Popen(
-                app_name,
-                shell=True,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )
-            time.sleep(1.5)
-            return True
-        except Exception as e:
-            print(f"[open_app] subprocess failed: {e}")
-
-    if ":" in app_name:
-        try:
-            subprocess.Popen(f"start {app_name}", shell=True)
-            time.sleep(1.0)
-            return True
-        except Exception:
-            pass
-
     try:
-        import pyautogui
-        pyautogui.PAUSE = 0.1
-        pyautogui.press("win")
-        time.sleep(0.7)
-        pyautogui.write(app_name, interval=0.05)
-        time.sleep(0.9)
-        pyautogui.press("enter")
-        time.sleep(2.5)
+        os.startfile(app_name)
         return True
     except Exception as e:
-        print(f"[open_app] Start Menu search failed: {e}")
+        print(f"[open_app] os.startfile failed: {e}")
+
+    try:
+        subprocess.Popen(
+            app_name,
+            shell=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        return True
+    except Exception as e:
+        print(f"[open_app] subprocess failed: {e}")
 
     return False
 
@@ -290,8 +273,7 @@ def open_app(
 
         if not launched:
             return (
-                f"Could not confirm that {app_name} launched. "
-                f"It may still be loading, or it might not be installed."
+                f"Não foi possível localizar ou abrir {app_name} automaticamente."
             )
 
         # Se monitor foi solicitado, tenta mover a janela

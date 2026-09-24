@@ -536,6 +536,8 @@ class JarvisLive:
 
         memory     = load_memory()
         mem_str    = format_memory_for_prompt(memory)
+        from core.knowledge_vault import build_boot_digest
+        vault_digest = build_boot_digest()
         sys_prompt = _load_system_prompt()
 
         now      = datetime.now(_TZ_BR)
@@ -563,6 +565,8 @@ class JarvisLive:
         parts = [time_ctx, identity_ctx]
         if mem_str:
             parts.append(mem_str)
+        if vault_digest:
+            parts.append(vault_digest)
         parts.append(sys_prompt)
 
         cfg = dict(
@@ -1006,6 +1010,7 @@ class JarvisLive:
 
                         if sc.turn_complete:
                             self._last_turn_activity = time.monotonic()
+                            self._watchdog_force_count = 0
                             if self._metric_turn_started:
                                 self._metric(
                                     "turn_complete",
@@ -1443,9 +1448,6 @@ class JarvisLive:
                             "Watchdog: turno travado repetidamente — "
                             "possível limite de cota, forçando reconexão."
                         )
-            else:
-                self._watchdog_force_count = 0
-
     async def _run_system_monitor(self) -> None:
         """Background task: voice alerts when metrics exceed thresholds."""
         while True:

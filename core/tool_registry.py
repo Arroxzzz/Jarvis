@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 from dataclasses import dataclass
 from typing import Any, Callable
 
@@ -247,13 +248,47 @@ async def dispatch_tool(name: str, args: dict, *, loop, jarvis=None, kind: str |
     session_memory = getattr(jarvis, "session_memory", None) if jarvis else None
 
     try:
-        result = spec.func(args, player=player, session_memory=session_memory, speak=speak, jarvis=jarvis, loop=loop)
+        if inspect.iscoroutinefunction(spec.func):
+            result = spec.func(
+                args,
+                player=player,
+                session_memory=session_memory,
+                speak=speak,
+                jarvis=jarvis,
+                loop=loop,
+            )
+            return await result
+        result = await loop.run_in_executor(
+            None,
+            lambda: spec.func(
+                args,
+                player=player,
+                session_memory=session_memory,
+                speak=speak,
+                jarvis=jarvis,
+                loop=loop,
+            ),
+        )
         if asyncio.iscoroutine(result):
             return await result
         return result
     except TypeError:
         try:
-            result = spec.func(args, player=player, session_memory=session_memory)
+            if inspect.iscoroutinefunction(spec.func):
+                result = spec.func(
+                    args,
+                    player=player,
+                    session_memory=session_memory,
+                )
+                return await result
+            result = await loop.run_in_executor(
+                None,
+                lambda: spec.func(
+                    args,
+                    player=player,
+                    session_memory=session_memory,
+                ),
+            )
             if asyncio.iscoroutine(result):
                 return await result
             return result
