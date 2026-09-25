@@ -88,7 +88,6 @@ class WakeWordGate:
                     captured = bytes(self._rolling_buffer)
                     self._rolling_buffer.clear()
                     return captured
-            print(f"[WakeGate] Bloqueado — fora da janela, sem detecção (now={now:.1f}, grace_until={self._grace_until:.1f})")
             return None
         except Exception as exc:
             self._available = False

@@ -5,7 +5,7 @@ import re
 import time
 import threading
 from pathlib import Path
-from core.llm_client import gemini_call_resilient
+from core.llm_client import gemini_call_resilient, resilient_text_call
 from core.paths import get_home_dir
 
 
@@ -27,15 +27,16 @@ def _get_api_key() -> str:
         return json.load(f)["gemini_api_key"]
 
 
-def _get_model(model_name: str):
-    from google import genai
-    _c = genai.Client(api_key=_get_api_key())
-
-    class _W:
+def _get_model(model_name: str = ""):
+    class _TextModel:
         def generate_content(self, contents):
-            return _c.models.generate_content(model=model_name, contents=contents)
+            class _R:
+                pass
+            response = _R()
+            response.text = resilient_text_call(contents, task_type="code")
+            return response
 
-    return _W()
+    return _TextModel()
 
 
 def _strip_fences(text: str) -> str:

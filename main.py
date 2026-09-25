@@ -906,6 +906,16 @@ class JarvisLive:
         if forwarded is not None:
             self._enqueue_mic_chunk(forwarded)
 
+    def _log_gated_chunk_error(self, future) -> None:
+        try:
+            exc = future.exception()
+        except Exception:
+            return
+        if exc is not None:
+            print(f"[JARVIS] ❌ Erro silencioso no pipeline do microfone: {exc!r}")
+            import traceback
+            traceback.print_exception(type(exc), exc, exc.__traceback__)
+
     def _enqueue_received_audio(self, data: bytes) -> None:
         if self.audio_in_queue is None:
             return
@@ -937,7 +947,8 @@ class JarvisLive:
             except Exception as e:
                 print(f"[JARVIS] ⚠️ Mic callback error: {e}")
                 return
-            asyncio.run_coroutine_threadsafe(self._process_gated_chunk(data), loop)
+            _fut = asyncio.run_coroutine_threadsafe(self._process_gated_chunk(data), loop)
+            _fut.add_done_callback(self._log_gated_chunk_error)
 
         try:
             with sd.InputStream(
@@ -980,6 +991,7 @@ class JarvisLive:
                             self._turn_audio += 1
                             if self._turn_done_event and self._turn_done_event.is_set():
                                 self._turn_done_event.clear()
+                            self._server_turn_done = False
                             # Split into ~50 ms chunks so interrupt() stops audio within 50 ms
                             # (24000 Hz × 2 bytes/sample × 0.05 s = 2400 bytes per slice)
                             _audio_data = response.data
@@ -1018,6 +1030,7 @@ class JarvisLive:
                         if sc.turn_complete:
                             self._last_turn_activity = time.monotonic()
                             self._watchdog_force_count = 0
+                            self._server_turn_done = True
                             if self._metric_turn_started:
                                 self._metric(
                                     "turn_complete",
@@ -1185,7 +1198,8 @@ class JarvisLive:
                         if self._is_speaking:
                             self._audio_gaps += 1
                         self.set_speaking(False)
-                        self._wake_gate.close_gate()
+                        if self._server_turn_done:
+                            self._wake_gate.close_gate()
                     continue
 
                 now = time.monotonic()
@@ -1655,6 +1669,7 @@ class JarvisLive:
         self._vision_busy = False
         self._vision_last_time = 0.0
         self._interrupted = False
+        self._server_turn_done = True
         self._last_turn_activity = time.monotonic()
 
     def _create_live_client(self) -> genai.Client:

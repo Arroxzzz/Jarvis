@@ -4,6 +4,7 @@ import platform
 import subprocess
 from pathlib import Path
 from datetime import datetime
+from config import is_windows, is_mac
 from core.paths import get_home_dir
 from core import write_guard
 
@@ -305,6 +306,28 @@ def read_file(path: str, name: str = "", max_chars: int = 4000) -> str:
         return f"Could not read file: {e}"
 
 
+def open_file(path: str, name: str = "") -> str:
+    try:
+        base   = _resolve_path(path)
+        target = (base / name) if name else base
+        if not _is_safe_path(target):
+            return f"Access denied: {target}"
+        if not target.exists():
+            return f"File not found: {target.name}"
+        if not target.is_file():
+            return f"Not a file: {target.name}"
+
+        if is_windows():
+            os.startfile(str(target))
+        elif is_mac():
+            subprocess.Popen(["open", "-t", str(target)])
+        else:
+            subprocess.Popen(["xdg-open", str(target)])
+        return f"Opened: {target.name}"
+    except Exception as e:
+        return f"Could not open file: {e}"
+
+
 def write_file(path: str, name: str = "", content: str = "",
                append: bool = False) -> str:
     try:
@@ -568,6 +591,11 @@ def file_controller(
 
         elif action == "read":
             result = read_file(path, name=name)
+            write_guard.log_action(action, label, True)
+            return result
+
+        elif action == "open":
+            result = open_file(path, name=name)
             write_guard.log_action(action, label, True)
             return result
 

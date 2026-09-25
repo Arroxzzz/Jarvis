@@ -15,6 +15,7 @@ import time
 import random
 from pathlib import Path
 from core.paths import get_home_dir, get_desktop_dir
+from core.llm_client import resilient_vision_call
 
 try:
     import pyautogui
@@ -337,7 +338,6 @@ def _screen_find(description: str) -> tuple[int, int] | None:
         img.save(buf, format="PNG")
         image_bytes = buf.getvalue()
 
-        client = genai.Client(api_key=api_key)
         prompt = (
             f"This is a screenshot of a {w}×{h} pixel screen. "
             f"Locate the UI element described as: '{description}'. "
@@ -345,15 +345,7 @@ def _screen_find(description: str) -> tuple[int, int] | None:
             f"If the element is not visible, reply: NOT_FOUND"
         )
 
-        response = client.models.generate_content(
-            model="gemini-flash-lite-latest",
-            contents=[
-                gtypes.Part.from_bytes(data=image_bytes, mime_type="image/png"),
-                prompt,
-            ],
-        )
-
-        text = (response.text or "").strip()
+        text = resilient_vision_call(prompt, image_bytes, "image/png").strip()
         if "NOT_FOUND" in text.upper():
             return None
 
