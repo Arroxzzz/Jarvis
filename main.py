@@ -66,7 +66,6 @@ from actions.code_helper       import code_helper
 from actions.dev_agent         import dev_agent
 from actions.web_search        import web_search as web_search_action
 from actions.computer_control  import computer_control
-from actions.game_updater      import game_updater
 from actions.system_monitor    import SystemMonitor, get_system_status
 from actions.proactive         import ProactiveEngine
 from actions.background_monitor import (
@@ -213,7 +212,10 @@ from core.tool_registry import dispatch_tool, get_declarations
 class JarvisLive:
 
     def __init__(self, ui: JarvisUI):
+        from core.wake_word_gate import WakeWordGate
+
         self.ui             = ui
+        self._wake_gate      = WakeWordGate()
         self._asst_name     = "JARVIS"   # updated each session from config
         self.session              = None
         self.audio_in_queue       = None
@@ -899,6 +901,11 @@ class JarvisLive:
             except Exception:
                 pass
 
+    async def _process_gated_chunk(self, data: bytes) -> None:
+        forwarded = await self._wake_gate.feed_async(data, asyncio.get_event_loop())
+        if forwarded is not None:
+            self._enqueue_mic_chunk(forwarded)
+
     def _enqueue_received_audio(self, data: bytes) -> None:
         if self.audio_in_queue is None:
             return
@@ -930,7 +937,7 @@ class JarvisLive:
             except Exception as e:
                 print(f"[JARVIS] ⚠️ Mic callback error: {e}")
                 return
-            loop.call_soon_threadsafe(self._enqueue_mic_chunk, data)
+            asyncio.run_coroutine_threadsafe(self._process_gated_chunk(data), loop)
 
         try:
             with sd.InputStream(
@@ -1178,6 +1185,7 @@ class JarvisLive:
                         if self._is_speaking:
                             self._audio_gaps += 1
                         self.set_speaking(False)
+                        self._wake_gate.close_gate()
                     continue
 
                 now = time.monotonic()
@@ -1691,6 +1699,7 @@ class JarvisLive:
 
     async def _handle_reconnect_error(self, exc: BaseException) -> None:
         """Centraliza lógica de fallback do modelo e reconexão após falha da sessão."""
+        self._resumption_handle = None
         err_str = self._flatten_err_text(exc)
         self._metric(
             "reconnect",

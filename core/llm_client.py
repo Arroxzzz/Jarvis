@@ -95,10 +95,10 @@ def _auth_headers(force_provider: str | None = None) -> dict:
 
 # Atualizado 2026-09 — modelos confirmados no catálogo público atual.
 GROQ_MODELS: dict[str, list[str]] = {
-    "reasoning": ["openai/gpt-oss-120b", "groq/compound-mini"],
+    "reasoning": ["openai/gpt-oss-120b"],
     "code":      ["openai/gpt-oss-120b", "openai/gpt-oss-20b"],
     "vision":    [],
-    "search":    ["groq/compound-mini", "openai/gpt-oss-20b"],
+    "search":    ["openai/gpt-oss-20b"],
     "general":   ["openai/gpt-oss-20b", "openai/gpt-oss-120b"],
 }
 
@@ -254,10 +254,14 @@ def _parse_retry_after(value: str | int | float | None) -> float:
 
 
 def _register_provider_failure(provider: str, exc: Exception) -> None:
+    state = _PROVIDER_STATE.setdefault(provider, {"blocked_until": 0.0, "failures": 0})
+    if getattr(exc, "status_code", None) == 404:
+        state["failures"] = int(state.get("failures", 0)) + 1
+        return
+
     retry_after = int(getattr(exc, "retry_after", 0) or 0)
     if retry_after <= 0 and getattr(exc, "status_code", None) == 429:
         retry_after = 5
-    state = _PROVIDER_STATE.setdefault(provider, {"blocked_until": 0.0, "failures": 0})
     if retry_after > 0:
         state["blocked_until"] = max(float(state.get("blocked_until", 0.0)), time.monotonic() + retry_after)
     else:
@@ -348,4 +352,3 @@ def resilient_vision_call(prompt: str, image_bytes: bytes, mime_type: str = "ima
 def gemini_call_resilient(prompt: str, system: str | None = None,
                           model: str = "", task_type: str = "general") -> str:
     return resilient_text_call(prompt, system=system, task_type=task_type)
-

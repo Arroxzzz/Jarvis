@@ -14,7 +14,6 @@ from actions.dev_agent import dev_agent
 from actions.file_controller import file_controller, open_folder
 from actions.file_processor import file_processor
 from actions.flight_finder import flight_finder
-from actions.game_updater import game_updater
 from actions.open_app import open_app
 from actions.reminder import reminder
 from actions.send_message import send_message
@@ -152,11 +151,6 @@ def _file_processor_tool(args: dict, *, player=None, speak=None, **_extra):
 @register_tool("computer_control", declaration=_decl("computer_control"), kind="advanced")
 def _computer_control_tool(args: dict, *, player=None, **_extra):
     return computer_control(parameters=args, player=player)
-
-
-@register_tool("game_updater", declaration=_decl("game_updater"), kind="advanced")
-def _game_updater_tool(args: dict, *, player=None, speak=None, **_extra):
-    return game_updater(parameters=args, player=player, speak=speak)
 
 
 @register_tool("flight_finder", declaration=_decl("flight_finder"), kind="advanced")
