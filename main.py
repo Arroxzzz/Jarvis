@@ -201,7 +201,7 @@ def _validate_gemini_key(api_key: str) -> bool:
 
 
 def _clean_transcript(text: str) -> str:    
-    text = _CTRL_RE.sub("", text)
+    text = _CTRL_RE.sub("", text) 
     text = re.sub(r"[\x00-\x08\x0b-\x1f]", "", text)
     return text.strip()
 
