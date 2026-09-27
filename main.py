@@ -75,7 +75,7 @@ from actions.coulson_listener   import listen_coulson
 from actions.web_search        import _news as _fetch_news_sync
 from memory.config_manager     import get_brief_enabled
 from core.plugin_loader        import discover_plugins
-from core.llm_client           import call_llm_text, get_openrouter_model, FREE_MODELS, gemini_call_resilient
+from core.llm_client           import call_llm_text, gemini_call_resilient
 from core.async_tool_runner    import run_bounded as _bounded
 from core.async_tool_runner    import run_tool_bound as _run_tool_bound
 from core import context_index

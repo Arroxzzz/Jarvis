@@ -46,23 +46,13 @@ _DEFAULTS = {
     "llm_provider": "ollama",   # "ollama" | "openai" | "openrouter" | "groq"
 }
 
-# Modelos 100% gratuitos no OpenRouter, por categoria de tarefa.
-# Ordem = prioridade de fallback (primeiro indisponível/rate-limited → tenta o próximo).
-# NOTA: validar disponibilidade real em openrouter.ai/models?max_price=0
-# antes do deploy — catálogo :free do OpenRouter muda com frequência.
-# Atualizado 2026-09 — catálogo :free do OpenRouter rotaciona slugs
-# constantemente. "openrouter/free" é o roteador oficial da OpenRouter.
-FREE_MODELS: dict[str, list[str]] = {
-    "reasoning": ["openrouter/free", "deepseek/deepseek-r1:free"],
-    "code":      ["openrouter/free", "qwen/qwen-2.5-coder-32b-instruct:free"],
-    "vision":    ["openrouter/free"],
-    "search":    ["openrouter/free"],
-    "general":   ["openrouter/free"],
+PAID_MODELS: dict[str, list[str]] = {
+    "code":    ["z-ai/glm-5.3-flash", "deepseek/deepseek-v4.1-flash"],
+    "search":  ["z-ai/glm-5.3-flash", "deepseek/deepseek-v4.1-flash"],
+    "vision":  ["z-ai/glm-5.3-flash"],
+    "general": ["z-ai/glm-5.3-flash", "deepseek/deepseek-v4.1-flash"],
 }
-
-def get_openrouter_model(task: str = "general") -> str:
-    """Retorna o modelo :free preferencial para a categoria; 'general' como padrão seguro."""
-    return FREE_MODELS.get(task, FREE_MODELS["general"])[0]
+PREMIUM_MODEL = "anthropic/claude-sonnet-5"
 
 def _has_key(provider: str) -> bool:
     """Pre-flight check — evita chamada de rede quando falta a chave."""
@@ -121,7 +111,7 @@ def get_llm_settings() -> tuple[str, str]:
             url = _PROVIDER_URLS["groq"]
             model = cfg.get("llm_model", GROQ_MODELS["general"][0])
         else:
-            model = cfg.get("llm_model", get_openrouter_model("general"))
+            model = cfg.get("llm_model", PAID_MODELS["general"][0])
     else:
         url   = cfg.get("llm_url",   _DEFAULTS["llm_url"]).rstrip("/")
         model = cfg.get("llm_model", _DEFAULTS["llm_model"])
@@ -150,7 +140,7 @@ def call_llm_text(
             raise RuntimeError(f"{force_provider}: chave ausente em config/api_keys.json — pulando.")
         if force_provider in ("openrouter", "groq"):
             url = _PROVIDER_URLS[force_provider]
-            default_model = model or (get_openrouter_model("general") if force_provider == "openrouter"
+            default_model = model or (PAID_MODELS["general"][0] if force_provider == "openrouter"
                                        else GROQ_MODELS["general"][0])
         else:
             url, default_model = get_llm_settings()
@@ -294,10 +284,14 @@ def resilient_text_call(prompt: str, system: str | None = None,
     if task_type not in GROQ_MODELS:
         task_type = "general"
 
-    for provider, models in (("groq", GROQ_MODELS.get(task_type, [])), ("openrouter", FREE_MODELS.get(task_type, FREE_MODELS["general"]))):
-        if not _provider_is_open(provider):
-            wait = _provider_next_retry(provider)
-            print(f"[LLM] {provider} em cooldown por {wait:.1f}s — pulando para próximo provedor.")
+    tiers = (
+        ("groq", "groq", GROQ_MODELS.get(task_type, [])),
+        ("openrouter_paid", "openrouter", PAID_MODELS.get(task_type, PAID_MODELS["general"])),
+    )
+    for breaker_key, provider, models in tiers:
+        if not _provider_is_open(breaker_key):
+            wait = _provider_next_retry(breaker_key)
+            print(f"[LLM] {breaker_key} em cooldown por {wait:.1f}s — pulando para próximo provedor.")
             continue
 
         for model in models:
@@ -305,14 +299,14 @@ def resilient_text_call(prompt: str, system: str | None = None,
                 return call_llm_text(prompt, system=system, model=model,
                                      timeout=timeout, force_provider=provider)
             except ProviderRequestError as e:
-                print(f"[LLM] {provider} {model} falhou: {e} — tentando próximo")
-                _register_provider_failure(provider, e)
-                if not _provider_is_open(provider):
+                print(f"[LLM] {breaker_key} {model} falhou: {e} — tentando próximo")
+                _register_provider_failure(breaker_key, e)
+                if not _provider_is_open(breaker_key):
                     break
             except Exception as e:
-                print(f"[LLM] {provider} {model} falhou: {e} — tentando próximo")
+                print(f"[LLM] {breaker_key} {model} falhou: {e} — tentando próximo")
 
-    return "Não foi possível obter resposta — todos os provedores gratuitos falharam, Senhor."
+    return "Não foi possível obter resposta no momento, Senhor — os provedores de linguagem estão indisponíveis."
 
 
 def resilient_vision_call(prompt: str, image_bytes: bytes, mime_type: str = "image/png",
@@ -330,7 +324,7 @@ def resilient_vision_call(prompt: str, image_bytes: bytes, mime_type: str = "ima
     }]
 
     for provider, models in (("groq", GROQ_MODELS.get("vision", [])),
-                             ("openrouter", FREE_MODELS["vision"])):
+                             ("openrouter", PAID_MODELS["vision"])):
         url = _PROVIDER_URLS[provider]
         for model in models:
             try:

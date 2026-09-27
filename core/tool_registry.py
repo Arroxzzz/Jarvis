@@ -181,31 +181,20 @@ def _manage_monitor_tool(args: dict, **_extra):
 @register_tool("deep_reasoning", declaration=_decl("deep_reasoning"), kind="advanced")
 async def _deep_reasoning_tool(args: dict, *, jarvis=None, loop=None, **_extra):
     query = args.get("query", "")
-    task_type = args.get("task_type", "general").strip().lower()
-    from core.llm_client import FREE_MODELS, call_llm_text
+    from core.llm_client import PREMIUM_MODEL, call_llm_text
 
-    if task_type not in FREE_MODELS:
-        task_type = "general"
-
-    def _ask_openrouter() -> str:
-        last_err = None
-        for model in FREE_MODELS[task_type]:
-            try:
-                return call_llm_text(
-                    query,
-                    system="Você é um especialista em raciocínio técnico. Responda em PT-BR, direto e completo.",
-                    model=model,
-                    timeout=25,
-                    force_provider="openrouter",
-                )
-            except Exception as e:
-                last_err = e
-                continue
-        raise RuntimeError(f"Todos os modelos gratuitos falharam: {last_err}")
+    def _ask_premium() -> str:
+        return call_llm_text(
+            query,
+            system="Você é um especialista em raciocínio técnico. Responda em PT-BR, direto e completo.",
+            model=PREMIUM_MODEL,
+            timeout=40,
+            force_provider="openrouter",
+        )
 
     try:
         loop = loop or asyncio.get_running_loop()
-        return await asyncio.wait_for(loop.run_in_executor(None, _ask_openrouter), timeout=80)
+        return await asyncio.wait_for(loop.run_in_executor(None, _ask_premium), timeout=80)
     except asyncio.TimeoutError:
         return "deep_reasoning demorou demais e foi cancelado, Senhor. Tente novamente ou reformule a pergunta."
     except Exception as e:

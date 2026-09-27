@@ -167,3 +167,21 @@
 {"ts": "2026-09-26T03:37:12.090714+00:00", "action": "create_file", "target": "Protótipo Teste 123.txt", "allowed": true}
 {"ts": "2026-09-26T03:37:19.657221+00:00", "action": "create_file", "target": "Protótipo Teste 123.txt", "allowed": true}
 {"ts": "2026-09-26T03:37:39.070116+00:00", "action": "open", "target": "Protótipo Teste 123.txt", "allowed": true}
+{"ts": "2026-09-26T17:54:34.785199+00:00", "action": "create_folder", "target": "Mark II", "allowed": true}
+{"ts": "2026-09-26T17:58:17.413971+00:00", "action": "create_folder", "target": "Mark 2", "allowed": true}
+{"ts": "2026-09-26T17:58:20.827879+00:00", "action": "create_folder", "target": "Mark 2", "allowed": true}
+{"ts": "2026-09-26T19:17:52.021067+00:00", "action": "create_folder", "target": "MARK III", "allowed": true}
+{"ts": "2026-09-26T19:18:07.183188+00:00", "action": "write", "target": "Resumo_Python.txt", "allowed": true}
+{"ts": "2026-09-26T19:18:25.437530+00:00", "action": "open", "target": "Resumo_Python.txt", "allowed": true}
+{"ts": "2026-09-27T16:23:55.709773+00:00", "action": "delete", "target": "delete_me.txt", "allowed": false}
+{"ts": "2026-09-27T16:23:55.929747+00:00", "action": "delete", "target": "delete_me.txt", "allowed": true}
+{"ts": "2026-09-27T16:23:55.978621+00:00", "action": "move", "target": "origem.txt", "allowed": true}
+{"ts": "2026-09-27T16:23:55.991997+00:00", "action": "delete", "target": "lista.txt", "allowed": false}
+{"ts": "2026-09-27T20:35:00.372025+00:00", "action": "delete", "target": "delete_me.txt", "allowed": false}
+{"ts": "2026-09-27T20:35:00.461966+00:00", "action": "delete", "target": "delete_me.txt", "allowed": true}
+{"ts": "2026-09-27T20:35:00.516254+00:00", "action": "move", "target": "origem.txt", "allowed": true}
+{"ts": "2026-09-27T20:35:00.567508+00:00", "action": "delete", "target": "lista.txt", "allowed": false}
+{"ts": "2026-09-27T20:36:31.958468+00:00", "action": "delete", "target": "delete_me.txt", "allowed": false}
+{"ts": "2026-09-27T20:36:32.047023+00:00", "action": "delete", "target": "delete_me.txt", "allowed": true}
+{"ts": "2026-09-27T20:36:32.091930+00:00", "action": "move", "target": "origem.txt", "allowed": true}
+{"ts": "2026-09-27T20:36:32.109017+00:00", "action": "delete", "target": "lista.txt", "allowed": false}

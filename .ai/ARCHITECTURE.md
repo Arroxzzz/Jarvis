@@ -41,3 +41,12 @@
 ## Estado operacional
 
 A linha de produto atual está estável e validada para uso real dentro do escopo seguro; as Fases 3, 4 e 5 foram concluídas sem alterar o caminho de áudio, e qualquer expansão futura deve ser guiada por feedback prático e não por promessa de autonomia ampla.
+
+## Atualização — Fase 7 (estabilização)
+
+- `core/wake_word_gate.py`: novo módulo, gate de wake word local (openWakeWord, "hey_jarvis"). Buffer circular de áudio + janela de graça pós-resposta. Plugado em main.py::_listen_audio (entrada) e _play_audio/_receive_audio (fechamento).
+- `core/llm_client.py`: `PAID_MODELS` (GLM-5.3-Flash, DeepSeek V4.1 Flash) e `PREMIUM_MODEL` (Claude Sonnet 5) adicionados. `FREE_MODELS`/`get_openrouter_model` removidos. Cadeia de fallback de texto: Groq → OpenRouter pago. Sonnet 5 só é chamado dentro de `_deep_reasoning_tool` (core/tool_registry.py), nunca no fallback automático.
+- `core/knowledge_vault.py`: `build_boot_digest()` novo — alimenta `_build_config()` em main.py com as notas mais recentes/relevantes do vault no início de cada sessão.
+- `core/tool_registry.py::dispatch_tool`: ferramentas síncronas agora rodam via `loop.run_in_executor`, nunca mais bloqueiam o loop de áudio.
+- Removidos: `actions/game_updater.py`, `plugins/pushup_counter.py`.
+- Canal de voz (Gemini Live) permanece isolado e intocado por essas mudanças — continua no tier gratuito do Google por decisão de custo; toda a camada de ferramentas/texto agora é majoritariamente paga (OpenRouter) com Groq grátis como primeira tentativa.

@@ -1,3 +1,28 @@
+## Fase 7 — Estabilização de Voz, Ferramentas e Custo (concluída)
+
+- [x] Bug do watchdog corrigido: contador não acumulava mais porque o próprio watchdog resetava ele — reset agora vive só na conclusão natural do turno (_receive_audio)
+- [x] Ferramentas síncronas travavam o áudio inteiro — dispatch_tool agora roda em ThreadPoolExecutor
+- [x] open_app trocado de simulação de teclado (pyautogui) pra os.startfile nativo
+- [x] Modelo morto groq/compound-mini removido; circuit breaker não bloqueia mais o provider inteiro por erro 404
+- [x] Bug de "zumbi" na reconexão corrigido (resumption_handle resetado em erro real)
+- [x] Código morto removido: actions/game_updater.py, plugins/pushup_counter.py
+- [x] Ferramenta open_file criada em actions/file_controller.py (capacidade que faltava)
+- [x] dev_agent.py e computer_control.py::_screen_find rerroteados pro sistema de fallback (paravam de consumir cota real do Gemini à toa)
+- [x] Exceção silenciosa no pipeline do microfone agora loga o erro real (_log_gated_chunk_error)
+- [x] core/prompt.txt: regra anti-enrolação (não recita plano duas vezes) e anti-tabela (resume em vez de narrar tabela inteira)
+- [x] Memória do Obsidian reconectada ao boot da sessão (build_boot_digest em knowledge_vault.py)
+- [x] Wake word implementado com openWakeWord — core/wake_word_gate.py (buffer rolante 8s, palavra em qualquer posição da frase, janela de graça de 12s, threading corrigido, timing de fechamento corrigido)
+- [x] Roteamento de LLM pago implementado: Groq (grátis, primeira tentativa) → GLM-5.3-Flash/DeepSeek V4.1 Flash (pago, OpenRouter) → Claude Sonnet 5 isolado só em deep_reasoning
+- [x] OpenRouter free removido de core/llm_client.py (redundante com o degrau pago)
+
+## Fase 8 — Auditoria Geral (próxima, chat novo)
+
+- [ ] Revisão completa do projeto do zero, com o histórico da Fase 7 já disponível via memória do Claude no mesmo Projeto
+- [ ] Investigar: transcrição picotada da fala do usuário nos logs (heard=...) — não bloqueante até agora, mas nunca diagnosticado a fundo
+- [ ] Investigar se o turno de ~100s visto uma vez após reconexão ainda ocorre (pode já ter sido resolvido pelo fix do zumbi de resumption)
+- [ ] Decidir se testa Vertex AI Express Mode (voz grátis por 90 dias) numa conta Google virgem
+- [ ] Buscar mais dead code / duplicação além do que já foi limpo na Fase 7
+
 # CURRENT_TASK — ESTADO FINAL DA LINHA DE PRODUTO
 
 ## Roadmap aprovado — fases 0 a 5

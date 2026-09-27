@@ -165,3 +165,13 @@ A ordem foi definida para preservar a linha produtiva atual e reduzir risco ante
 ## Encerramento da fase atual
 
 A linha de produto atual está pronta para uso seguro no ambiente do Senhor. O próximo passo lógico é operação real e refinamento do comportamento, não expansão de escopo para autonomia ampla ou novas promessas de AGI.
+
+## Sessão de estabilização (Fase 7)
+
+O JARVIS passou por uma rodada extensa de debug guiado por testes reais de voz, não revisão de código a frio. Quinze problemas reais foram encontrados e corrigidos (lista completa em CURRENT_TASK.md, Fase 7). O padrão de causa raiz que se repetiu: bugs de timing/threading no pipeline de áudio (watchdog, dispatch_tool, wake gate) e chamadas de LLM sem proteção de fallback (dev_agent, screen_find, modelo Groq morto) — nenhum dos problemas era a "API do Google sendo lenta" como se suspeitava inicialmente; a maior parte era lógica própria do projeto.
+
+Decisão de custo consolidada: o canal de voz (Gemini Live) fica no tier gratuito do Google — o mínimo de pagamento (R$150 no Brasil, tanto AI Studio quanto Google Cloud) está acima do orçamento disponível. Todo o resto do sistema (busca, código, ações, raciocínio pesado) roda em LLMs pagos baratos via OpenRouter (GLM-5.3-Flash/DeepSeek V4.1 Flash), com Groq grátis como primeira tentativa e Claude Sonnet 5 reservado só para `deep_reasoning`. Custo real observado em teste: frações de centavo de dólar por sessão de uso normal.
+
+Problemas conhecidos que SAÍRAM da lista: watchdog nunca reconectando, ferramentas travando o áudio, teclado fantasma no open_app, resposta duplicada/repetitiva, memória desconectada do vault, microfone sempre ativo consumindo cota à toa.
+
+Problemas que PERMANECEM: instabilidade ocasional do lado do servidor do Gemini (erro 1011, fora do nosso controle), transcrição de log picotada (não confirmado se afeta o entendimento real do comando), Vertex AI Express Mode ainda não testado como via gratuita pra voz.
