@@ -71,7 +71,6 @@ from actions.proactive         import ProactiveEngine
 from actions.background_monitor import (
     add_monitor, remove_monitor, list_monitors, check_all as monitor_check_all,
 )
-from actions.coulson_listener   import listen_coulson
 from actions.web_search        import _news as _fetch_news_sync
 from memory.config_manager     import get_brief_enabled
 from core.plugin_loader        import discover_plugins
@@ -259,7 +258,6 @@ class JarvisLive:
         self._last_turn_activity: float = time.monotonic()   # watchdog anti-travamento de mic
         self._watchdog_force_count: int = 0   # disparos consecutivos do watchdog — reset em turno saudável
         self._tasks = BackgroundTaskTracker()
-        self._coulson_stop          = asyncio.Event()
         self._enhanced_live = True  # affective dialog + proactive audio; auto-disabled if the server rejects them
         self._live_candidates: list[str] = []   # preenchido em _resolve_live_model()
         self._live_idx = 0                      # índice do candidato atual em uso
@@ -1643,10 +1641,6 @@ class JarvisLive:
         tg.create_task(self._run_system_monitor())
         tg.create_task(self._run_background_monitor())
         tg.create_task(self._run_context_reindex())
-        tg.create_task(
-            listen_coulson(self.speak, self.ui.write_log, self._coulson_stop),
-            name="coulson"
-        )
         if self._mic_available:
             tg.create_task(self._turn_watchdog(), name="watchdog")
         tg.create_task(self._run_proactive_mode())
@@ -1821,8 +1815,6 @@ class JarvisLive:
                 )
             _write_config_key(_LIVE_MODEL_CACHE_KEY, _live_model)
             self._conn_backoff = 3
-            self._coulson_stop.clear()
-
             self._start_runtime_tasks(tg)
             # Keep the connection alive for the whole session lifetime while the
             # TaskGroup is active; the surrounding loop will re-enter on the next
@@ -1858,7 +1850,6 @@ class JarvisLive:
             except SystemExit:
                 raise
             except BaseException as e:
-                self._coulson_stop.set()
                 await self._handle_reconnect_error(e)
             finally:
                 await self._finish_session_cycle()

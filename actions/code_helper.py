@@ -5,6 +5,7 @@ import re
 import time
 from pathlib import Path
 from core.llm_client import resilient_text_call, resilient_vision_call
+from core import write_guard
 
 
 def get_base_dir():
@@ -30,7 +31,7 @@ def _get_gemini(model: str = GEMINI_MODEL):
             class _R:
                 pass
             response = _R()
-            response.text = resilient_text_call(contents, task_type="code")
+            response.text = resilient_text_call(contents, task_type="code", raise_on_fail=True)
             return response
 
     return _TextModel()
@@ -79,8 +80,11 @@ def _read_file(file_path: str) -> tuple[str, str]:
 
 
 def _save_file(path: Path, content: str) -> str:
+    if not (content or "").strip():
+        return "Could not save: conteúdo vazio."
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
+        write_guard.backup_file(path)
         path.write_text(content, encoding="utf-8")
         return f"Saved to: {path}"
     except Exception as e:

@@ -463,7 +463,7 @@ async def test_run_tool_bound_timeout_message():
 def test_resilient_text_call_falls_back_after_groq_retry_after(monkeypatch):
     import core.llm_client as llm_client
 
-    def fake_call_llm_text(prompt, system=None, model=None, timeout=120, force_provider=None):
+    def fake_call_llm_text(prompt, system=None, model=None, timeout=120, force_provider=None, **kwargs):
         if force_provider == "groq":
             raise llm_client.ProviderRequestError("groq", "429 Too Many Requests", 429, 7)
         return "fallback-ok"
@@ -496,6 +496,152 @@ def test_background_panel_result_is_only_reinjected_once():
     assert first is False
     assert second is True
     assert third is False
+
+
+def test_call_llm_text_rejects_empty_and_optional_truncation(monkeypatch):
+    import core.llm_client as lc
+
+    class FakeResponse:
+        def __init__(self, content, finish_reason="stop"):
+            self.content = content
+            self.finish_reason = finish_reason
+
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"choices": [{
+                "message": {"content": self.content},
+                "finish_reason": self.finish_reason,
+            }]}
+
+    payloads = []
+    current = {"content": "", "finish_reason": "stop"}
+
+    def fake_post(url, *, json, **kwargs):
+        payloads.append(json)
+        return FakeResponse(**current)
+
+    monkeypatch.setattr(lc, "_has_key", lambda provider: True)
+    monkeypatch.setattr(lc, "_auth_headers", lambda provider=None: {})
+    monkeypatch.setattr(lc.requests, "post", fake_post)
+
+    with pytest.raises(RuntimeError, match="resposta vazia"):
+        lc.call_llm_text("prompt", force_provider="groq")
+
+    current.update(content="trecho", finish_reason="length")
+    with pytest.raises(RuntimeError, match="cortada"):
+        lc.call_llm_text("prompt", force_provider="groq", fail_on_length=True)
+    assert lc.call_llm_text("prompt", force_provider="groq", fail_on_length=False) == "trecho"
+    lc.call_llm_text("prompt", force_provider="groq", max_tokens=4321)
+    assert payloads[-1]["max_tokens"] == 4321
+
+
+def test_resilient_text_call_retries_empty_and_supports_raise_on_fail(monkeypatch):
+    import core.llm_client as lc
+
+    attempts = []
+
+    def fake_call(prompt, **kwargs):
+        attempts.append(kwargs)
+        if len(attempts) == 1:
+            raise RuntimeError("resposta vazia")
+        return "ok"
+
+    monkeypatch.setattr(lc, "call_llm_text", fake_call)
+    assert lc.resilient_text_call("prompt", task_type="code") == "ok"
+    assert len(attempts) == 2
+    assert attempts[0]["max_tokens"] == 4000
+    assert attempts[0]["fail_on_length"] is True
+
+    monkeypatch.setattr(lc, "call_llm_text", lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("offline")))
+    assert lc.resilient_text_call("prompt") == lc.LLM_FAIL_MSG
+    with pytest.raises(lc.LLMUnavailableError, match="provedores"):
+        lc.resilient_text_call("prompt", raise_on_fail=True)
+
+
+def test_backup_file_copies_original_and_skips_missing(tmp_path, monkeypatch):
+    from core import write_guard
+
+    base = tmp_path / "base"
+    monkeypatch.setattr(write_guard, "get_base_dir", lambda: base)
+    original = tmp_path / "important.txt"
+    original.write_text("original", encoding="utf-8")
+
+    backup = write_guard.backup_file(original)
+    assert backup is not None
+    assert backup.read_text(encoding="utf-8") == "original"
+    assert backup.parent == base / "memory" / "backups"
+    assert write_guard.backup_file(tmp_path / "missing.txt") is None
+
+
+def test_code_helper_save_file_backs_up_and_rejects_empty(tmp_path, monkeypatch):
+    from actions import code_helper
+
+    monkeypatch.setattr(code_helper.write_guard, "get_base_dir", lambda: tmp_path / "base")
+    target = tmp_path / "project" / "file.py"
+    target.parent.mkdir(parents=True)
+    target.write_text("velho", encoding="utf-8")
+
+    result = code_helper._save_file(target, "novo")
+    assert result.startswith("Saved to:")
+    assert target.read_text(encoding="utf-8") == "novo"
+    backups = list((tmp_path / "base" / "memory" / "backups").glob("*.bak"))
+    assert len(backups) == 1
+    assert backups[0].read_text(encoding="utf-8") == "velho"
+
+    assert code_helper._save_file(target, " \n") == "Could not save: conteúdo vazio."
+    assert target.read_text(encoding="utf-8") == "novo"
+
+
+def test_web_answer_uses_ddg_evidence_and_raw_fallback(monkeypatch):
+    from actions import web_search
+    import core.llm_client as lc
+
+    captured = []
+    evidence = [{"title": "Fato atual", "snippet": "Resultado encontrado", "url": "https://example.test"}]
+    monkeypatch.setattr(web_search, "_ddg_search", lambda query, max_results=6: evidence)
+
+    def fake_llm(prompt, task_type="general"):
+        captured.append(prompt)
+        return "Resumo baseado nas fontes"
+
+    monkeypatch.setattr(web_search, "resilient_text_call", fake_llm)
+    assert web_search._web_answer("pergunta", ["consulta"]) == "Resumo baseado nas fontes"
+    assert "Resultado encontrado" in captured[-1]
+
+    monkeypatch.setattr(web_search, "resilient_text_call", lambda *args, **kwargs: lc.LLM_FAIL_MSG)
+    assert "Resultado encontrado" in web_search._web_answer("pergunta", ["consulta"])
+
+    monkeypatch.setattr(web_search, "_ddg_search", lambda query, max_results=6: [])
+    with pytest.raises(ValueError, match="Sem resultados"):
+        web_search._web_answer("pergunta", ["consulta"])
+
+
+def test_web_news_never_uses_llm_without_ddg_results(monkeypatch):
+    from actions import web_search
+
+    monkeypatch.setattr(web_search, "_ddg_news", lambda query, max_results=8: [])
+    monkeypatch.setattr(
+        web_search, "resilient_text_call",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("LLM chamado")),
+    )
+    assert web_search._news("notícias").startswith("No news found")
+
+
+def test_flight_finder_uses_fallback_parser_without_fixed_dates(monkeypatch):
+    from actions import flight_finder
+    import core.llm_client as lc
+
+    url = flight_finder._build_google_flights_url("IST", "LHR", "2026-10-01")
+    assert "tfs=" not in url
+
+    monkeypatch.setattr(lc, "resilient_text_call", lambda *args, **kwargs: '[{"airline":"Test Air"}]')
+    assert flight_finder._parse_flights_with_gemini("page", "IST", "LHR", "2026-10-01") == [
+        {"airline": "Test Air"}
+    ]
+    monkeypatch.setattr(lc, "resilient_text_call", lambda *args, **kwargs: lc.LLM_FAIL_MSG)
+    assert flight_finder._parse_flights_with_gemini("page", "IST", "LHR", "2026-10-01") == []
 
 
 def test_audio_queue_snapshot_reports_backlog_and_underrun():
@@ -897,4 +1043,3 @@ def test_dev_agent_mentor_mode_proposes_patch_without_applying_it():
     assert "Mentoria guiada" in result
     assert "Patch sugerido" in result
     assert "nenhuma alteração foi aplicada" in result.lower()
-

@@ -526,7 +526,6 @@ JARVIS/
 │   ├── screen_processor.py
 │   ├── send_message.py
 │   ├── system_monitor.py
-│   ├── upload_video.py
 │   ├── weather_report.py
 │   ├── web_search.py
 │   └── youtube_video.py

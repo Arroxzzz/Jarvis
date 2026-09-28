@@ -164,6 +164,7 @@ def create_file(path: str, name: str = "", content: str = "") -> str:
         if not _is_safe_path(target):
             return f"Access denied: {target}"
         target.parent.mkdir(parents=True, exist_ok=True)
+        write_guard.backup_file(target)
         target.write_text(content, encoding="utf-8")
         return f"File created: {target.name}"
     except Exception as e:
@@ -337,6 +338,8 @@ def write_file(path: str, name: str = "", content: str = "",
             return f"Access denied: {target}"
         target.parent.mkdir(parents=True, exist_ok=True)
         mode = "a" if append else "w"
+        if not append:
+            write_guard.backup_file(target)
         with open(target, mode, encoding="utf-8") as f:
             f.write(content)
         action = "Appended to" if append else "Written to"

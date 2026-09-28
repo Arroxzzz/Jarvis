@@ -54,6 +54,16 @@ PAID_MODELS: dict[str, list[str]] = {
 }
 PREMIUM_MODEL = "anthropic/claude-sonnet-5"
 
+# Limites por tipo de tarefa (antes: 800 fixo, que cortava código e deixava respostas vazias)
+MAX_TOKENS_BY_TASK: dict[str, int] = {"code": 4000, "reasoning": 2000, "search": 1200, "general": 1200}
+TIMEOUT_BY_TASK:    dict[str, int] = {"code": 60,   "reasoning": 45,   "search": 25,   "general": 25}
+LLM_FAIL_MSG = "Não foi possível obter resposta no momento, Senhor — os provedores de linguagem estão indisponíveis."
+
+
+class LLMUnavailableError(RuntimeError):
+    """Todos os provedores falharam (só levantada com raise_on_fail=True)."""
+
+
 def _has_key(provider: str) -> bool:
     """Pre-flight check — evita chamada de rede quando falta a chave."""
     if provider not in ("groq", "openrouter"):
@@ -124,6 +134,8 @@ def call_llm_text(
     model:          str | None = None,
     timeout:        int = 120,
     force_provider: str | None = None,
+    max_tokens:     int = 800,
+    fail_on_length: bool = False,
 ) -> str:
     """
     Simple text-only generation (no tools).
@@ -153,15 +165,21 @@ def call_llm_text(
         try:
             resp = requests.post(
                 f"{url}/chat/completions",
-                json={"model": m, "messages": messages, "stream": False, "max_tokens": 800},
+                json={"model": m, "messages": messages, "stream": False, "max_tokens": max_tokens},
                 headers=_auth_headers(force_provider), timeout=timeout,
             )
             resp.raise_for_status()
+            choice = resp.json()["choices"][0]
+            text = (choice.get("message", {}).get("content") or "").strip()
+            if not text:
+                raise RuntimeError("resposta vazia")
+            if fail_on_length and choice.get("finish_reason") == "length":
+                raise RuntimeError("resposta cortada por limite de tokens")
             print(
                 f"[METRIC] provider_end provider={force_provider or provider} "
                 f"model={m} ms={round((time.monotonic() - started) * 1000)} status=ok"
             )
-            return (resp.json()["choices"][0]["message"].get("content") or "").strip()
+            return text
         except Exception as e:
             print(
                 f"[METRIC] provider_end provider={force_provider or provider} "
@@ -279,10 +297,16 @@ def _is_transient(exc: Exception) -> bool:
 
 
 def resilient_text_call(prompt: str, system: str | None = None,
-                        task_type: str = "general", timeout: int = 20) -> str:
-    """Camada única de texto: Groq gratuito e depois OpenRouter gratuito."""
+                        task_type: str = "general", timeout: int | None = None,
+                        raise_on_fail: bool = False) -> str:
+    """Groq grátis → OpenRouter pago. Resposta vazia conta como falha (em 'code', cortada também).
+    raise_on_fail=True levanta LLMUnavailableError em vez de devolver LLM_FAIL_MSG —
+    obrigatório quando o retorno será gravado em arquivo."""
     if task_type not in GROQ_MODELS:
         task_type = "general"
+    timeout        = timeout or TIMEOUT_BY_TASK.get(task_type, 25)
+    max_tokens     = MAX_TOKENS_BY_TASK.get(task_type, 1200)
+    fail_on_length = task_type == "code"
 
     tiers = (
         ("groq", "groq", GROQ_MODELS.get(task_type, [])),
@@ -297,7 +321,8 @@ def resilient_text_call(prompt: str, system: str | None = None,
         for model in models:
             try:
                 return call_llm_text(prompt, system=system, model=model,
-                                     timeout=timeout, force_provider=provider)
+                                     timeout=timeout, force_provider=provider, max_tokens=max_tokens,
+                                     fail_on_length=fail_on_length)
             except ProviderRequestError as e:
                 print(f"[LLM] {breaker_key} {model} falhou: {e} — tentando próximo")
                 _register_provider_failure(breaker_key, e)
@@ -306,7 +331,9 @@ def resilient_text_call(prompt: str, system: str | None = None,
             except Exception as e:
                 print(f"[LLM] {breaker_key} {model} falhou: {e} — tentando próximo")
 
-    return "Não foi possível obter resposta no momento, Senhor — os provedores de linguagem estão indisponíveis."
+    if raise_on_fail:
+        raise LLMUnavailableError(LLM_FAIL_MSG)
+    return LLM_FAIL_MSG
 
 
 def resilient_vision_call(prompt: str, image_bytes: bytes, mime_type: str = "image/png",
@@ -344,5 +371,7 @@ def resilient_vision_call(prompt: str, image_bytes: bytes, mime_type: str = "ima
 
 
 def gemini_call_resilient(prompt: str, system: str | None = None,
-                          model: str = "", task_type: str = "general") -> str:
-    return resilient_text_call(prompt, system=system, task_type=task_type)
+                          model: str = "", task_type: str = "general",
+                          raise_on_fail: bool = False) -> str:
+    return resilient_text_call(prompt, system=system, task_type=task_type,
+                               raise_on_fail=raise_on_fail)

@@ -7,6 +7,7 @@ import threading
 from pathlib import Path
 from core.llm_client import gemini_call_resilient, resilient_text_call
 from core.paths import get_home_dir
+from core import write_guard
 
 
 def get_base_dir():
@@ -33,7 +34,7 @@ def _get_model(model_name: str = ""):
             class _R:
                 pass
             response = _R()
-            response.text = resilient_text_call(contents, task_type="code")
+            response.text = resilient_text_call(contents, task_type="code", raise_on_fail=True)
             return response
 
     return _TextModel()
@@ -220,10 +221,13 @@ General rules:
 
 Code for {file_path}:"""
 
-    code = _strip_fences(gemini_call_resilient(prompt, task_type="code"))
+    code = _strip_fences(gemini_call_resilient(prompt, task_type="code", raise_on_fail=True))
+    if not code.strip():
+        raise ValueError(f"código vazio para {file_path}")
 
     full_path = project_dir / file_path
     full_path.parent.mkdir(parents=True, exist_ok=True)
+    write_guard.backup_file(full_path)
     full_path.write_text(code, encoding="utf-8")
 
     print(f"[DevAgent] ✅ Written: {file_path} ({len(code)} chars)")
@@ -409,10 +413,13 @@ Rules:
 
 Fixed code for {fix_path}:"""
 
-        fixed = _strip_fences(gemini_call_resilient(prompt, task_type="code"))
+        fixed = _strip_fences(gemini_call_resilient(prompt, task_type="code", raise_on_fail=True))
+        if not fixed.strip():
+            continue
         try:
             full_path = project_dir / fix_path
             full_path.parent.mkdir(parents=True, exist_ok=True)
+            write_guard.backup_file(full_path)
             full_path.write_text(fixed, encoding="utf-8")
             updated_codes[fix_path] = fixed
             print(f"[DevAgent] 🔧 Fixed: {fix_path}")
@@ -444,6 +451,10 @@ def _build_project(
         if speak: speak(msg)
         return msg
     except ValueError as e:
+        msg = f"Planning failed: {e}"
+        if speak: speak(msg)
+        return msg
+    except Exception as e:
         msg = f"Planning failed: {e}"
         if speak: speak(msg)
         return msg
