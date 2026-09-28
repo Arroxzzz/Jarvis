@@ -155,8 +155,7 @@ computer_settings: TODAS as ações simples do sistema (volume, brilho,
 wifi, fechar janela, atalhos, energia).
 system_status: quando perguntado sobre CPU, RAM, GPU, temperatura,
 desempenho do computador.
-web_search: mode='news' para eventos atuais, mode='research' para
-aprofundamento, mode='price' para preços de produtos.
+web_search: mode='news' para eventos atuais, mode='research' para aprofundamento, mode='search' para o resto (inclui preços). O resultado vem cru: resuma em poucas frases e NUNCA invente valores que não estejam nos resultados.
 open_on_monitor: use quando o usuário mencionar monitor secundário,
 segundo monitor, TV, ou quiser abrir algo "do lado". Nunca use
 browser_control para isso — open_on_monitor é mais rápido e não

@@ -64,6 +64,10 @@ class LLMUnavailableError(RuntimeError):
     """Todos os provedores falharam (só levantada com raise_on_fail=True)."""
 
 
+class LLMOutputError(RuntimeError):
+    """Provedor respondeu, mas a saída é inutilizável (vazia ou cortada)."""
+
+
 def _has_key(provider: str) -> bool:
     """Pre-flight check — evita chamada de rede quando falta a chave."""
     if provider not in ("groq", "openrouter"):
@@ -136,6 +140,7 @@ def call_llm_text(
     force_provider: str | None = None,
     max_tokens:     int = 800,
     fail_on_length: bool = False,
+    reasoning_effort: str | None = None,
 ) -> str:
     """
     Simple text-only generation (no tools).
@@ -163,23 +168,39 @@ def call_llm_text(
         messages.append({"role": "user", "content": prompt})
         started = time.monotonic()
         try:
+            payload = {"model": m, "messages": messages, "stream": False, "max_tokens": max_tokens}
+            if reasoning_effort:
+                if provider == "groq" and m.startswith("openai/gpt-oss"):
+                    payload["reasoning_effort"] = reasoning_effort
+                elif provider == "openrouter":
+                    payload["reasoning"] = {"effort": reasoning_effort}
             resp = requests.post(
-                f"{url}/chat/completions",
-                json={"model": m, "messages": messages, "stream": False, "max_tokens": max_tokens},
+                f"{url}/chat/completions", json=payload,
                 headers=_auth_headers(force_provider), timeout=timeout,
             )
             resp.raise_for_status()
-            choice = resp.json()["choices"][0]
-            text = (choice.get("message", {}).get("content") or "").strip()
+            data   = resp.json()
+            choice = data["choices"][0]
+            text   = (choice.get("message", {}).get("content") or "").strip()
+            usage  = data.get("usage") or {}
+            out_tk = usage.get("completion_tokens")
+            diag   = (f"finish={choice.get('finish_reason')} out={out_tk} "
+                      f"reasoning={(usage.get('completion_tokens_details') or {}).get('reasoning_tokens')}")
             if not text:
-                raise RuntimeError("resposta vazia")
+                raise LLMOutputError(f"resposta vazia ({diag})")
             if fail_on_length and choice.get("finish_reason") == "length":
-                raise RuntimeError("resposta cortada por limite de tokens")
+                raise LLMOutputError(f"resposta cortada por limite de tokens ({diag})")
             print(
                 f"[METRIC] provider_end provider={force_provider or provider} "
-                f"model={m} ms={round((time.monotonic() - started) * 1000)} status=ok"
+                f"model={m} ms={round((time.monotonic() - started) * 1000)} status=ok out={out_tk}"
             )
             return text
+        except LLMOutputError:
+            print(
+                f"[METRIC] provider_end provider={force_provider or provider} "
+                f"model={m} ms={round((time.monotonic() - started) * 1000)} status=bad_output"
+            )
+            raise
         except Exception as e:
             print(
                 f"[METRIC] provider_end provider={force_provider or provider} "
@@ -299,9 +320,9 @@ def _is_transient(exc: Exception) -> bool:
 def resilient_text_call(prompt: str, system: str | None = None,
                         task_type: str = "general", timeout: int | None = None,
                         raise_on_fail: bool = False) -> str:
-    """Groq grátis → OpenRouter pago. Resposta vazia conta como falha (em 'code', cortada também).
-    raise_on_fail=True levanta LLMUnavailableError em vez de devolver LLM_FAIL_MSG —
-    obrigatório quando o retorno será gravado em arquivo."""
+    """Groq grátis → OpenRouter pago. Vazio conta como falha (em 'code', cortada também).
+    Breaker por modelo: 429 no gpt-oss-120b não bloqueia o gpt-oss-20b (cota própria).
+    raise_on_fail=True levanta LLMUnavailableError — obrigatório quando o retorno vai para arquivo."""
     if task_type not in GROQ_MODELS:
         task_type = "general"
     timeout        = timeout or TIMEOUT_BY_TASK.get(task_type, 25)
@@ -309,27 +330,24 @@ def resilient_text_call(prompt: str, system: str | None = None,
     fail_on_length = task_type == "code"
 
     tiers = (
-        ("groq", "groq", GROQ_MODELS.get(task_type, [])),
-        ("openrouter_paid", "openrouter", PAID_MODELS.get(task_type, PAID_MODELS["general"])),
+        ("groq", GROQ_MODELS.get(task_type, [])),
+        ("openrouter", PAID_MODELS.get(task_type, PAID_MODELS["general"])),
     )
-    for breaker_key, provider, models in tiers:
-        if not _provider_is_open(breaker_key):
-            wait = _provider_next_retry(breaker_key)
-            print(f"[LLM] {breaker_key} em cooldown por {wait:.1f}s — pulando para próximo provedor.")
-            continue
-
+    for provider, models in tiers:
         for model in models:
+            key = f"{provider}:{model}"
+            if not _provider_is_open(key):
+                print(f"[LLM] {key} em cooldown por {_provider_next_retry(key):.1f}s — pulando.")
+                continue
             try:
                 return call_llm_text(prompt, system=system, model=model,
                                      timeout=timeout, force_provider=provider, max_tokens=max_tokens,
-                                     fail_on_length=fail_on_length)
+                                     fail_on_length=fail_on_length, reasoning_effort="low")
             except ProviderRequestError as e:
-                print(f"[LLM] {breaker_key} {model} falhou: {e} — tentando próximo")
-                _register_provider_failure(breaker_key, e)
-                if not _provider_is_open(breaker_key):
-                    break
+                print(f"[LLM] {key} falhou: {e} — tentando próximo")
+                _register_provider_failure(key, e)
             except Exception as e:
-                print(f"[LLM] {breaker_key} {model} falhou: {e} — tentando próximo")
+                print(f"[LLM] {key} falhou: {e} — tentando próximo")
 
     if raise_on_fail:
         raise LLMUnavailableError(LLM_FAIL_MSG)

@@ -757,3 +757,9 @@ E que, independentemente da máquina onde esteja executando, continue sendo o me
 > **J.A.R.V.I.S.**
 >
 > *Just A Rather Very Intelligent System*
+
+---
+
+# Créditos e Base do Projeto
+
+Este projeto teve como ponto de partida o **MARK XL**, criado por **FatihMakes**, e foi amplamente e extensivamente reescrito, traduzido e expandido por **Paulo Mendes Silva**, com novos recursos, estrutura e funcionalidades. As licenças e atribuições do projeto de origem e dos componentes de terceiros continuam válidas e devem ser respeitadas.

@@ -5,7 +5,7 @@ import re
 import time
 import threading
 from pathlib import Path
-from core.llm_client import gemini_call_resilient, resilient_text_call
+from core.llm_client import gemini_call_resilient, resilient_text_call, LLMUnavailableError
 from core.paths import get_home_dir
 from core import write_guard
 
@@ -104,6 +104,34 @@ def _has_error(output: str, run_command: str) -> bool:
 
 class RateLimitError(Exception):
     pass
+
+
+_PIP_BY_MODULE = {
+    "pygame": "pygame", "requests": "requests", "numpy": "numpy", "pandas": "pandas",
+    "flask": "flask", "fastapi": "fastapi", "uvicorn": "uvicorn", "httpx": "httpx",
+    "pydantic": "pydantic", "rich": "rich", "tqdm": "tqdm", "colorama": "colorama",
+    "matplotlib": "matplotlib", "PIL": "pillow", "cv2": "opencv-python",
+    "bs4": "beautifulsoup4", "yaml": "pyyaml", "dotenv": "python-dotenv",
+    "pytest": "pytest", "psutil": "psutil", "pyperclip": "pyperclip",
+}
+_PIP_ALLOWED = set(_PIP_BY_MODULE.values())
+
+
+def _order_files(files: list[dict]) -> list[dict]:
+    """Ordem topológica (dependências primeiro). Ciclo → ordena por nº de imports."""
+    from graphlib import TopologicalSorter, CycleError
+    by_mod: dict[str, dict] = {}
+    for f in files:
+        p = (f.get("path") or "").replace("\\", "/")
+        if p:
+            by_mod[p.removesuffix(".py").replace("/", ".")] = f
+    ts = TopologicalSorter()
+    for mod, f in by_mod.items():
+        ts.add(mod, *[d for d in f.get("imports", []) if d in by_mod and d != mod])
+    try:
+        return [by_mod[m] for m in ts.static_order()]
+    except CycleError:
+        return sorted(by_mod.values(), key=lambda fi: len(fi.get("imports", [])))
 
 
 def _plan_project(description: str, language: str) -> dict:
@@ -240,6 +268,9 @@ def _install_dependencies(dependencies: list[str], project_dir: Path) -> str:
     to_install = []
     for dep in dependencies:
         pkg_name = re.split(r"[>=<!]", dep)[0].strip()
+        if pkg_name.lower() not in _PIP_ALLOWED:
+            print(f"[DevAgent] ⛔ Fora da allowlist, não instalado: {pkg_name}")
+            continue
         result = subprocess.run(
             [sys.executable, "-m", "pip", "show", pkg_name],
             capture_output=True, text=True
@@ -323,22 +354,24 @@ def _run_project(run_command: str, project_dir: Path, timeout: int = 30) -> str:
         return f"Run error: {e}"
 
 def _try_auto_install(error_output: str, project_dir: Path) -> bool:
-    """ModuleNotFoundError varsa eksik paketi otomatik kurmaya çalışır."""
-    pattern = re.compile(
-        r"No module named ['\"]([a-zA-Z0-9_\-\.]+)['\"]", re.IGNORECASE
-    )
-    match = pattern.search(error_output)
+    """Instala módulo ausente SÓ se estiver na allowlist e não for stdlib nem módulo do próprio projeto."""
+    match = re.search(r"No module named ['\"]([a-zA-Z0-9_\-\.]+)['\"]", error_output, re.IGNORECASE)
     if not match:
         return False
-
-    pkg = match.group(1).replace("_", "-").split(".")[0]
+    mod = match.group(1).split(".")[0]
+    if (mod in getattr(sys, "stdlib_module_names", ())
+            or (project_dir / mod).exists() or (project_dir / f"{mod}.py").exists()):
+        return False
+    pkg = _PIP_BY_MODULE.get(mod)
+    if not pkg:
+        print(f"[DevAgent] ⛔ Módulo '{mod}' fora da allowlist — não instalado.")
+        return False
     print(f"[DevAgent] 🔧 Auto-installing missing package: {pkg}")
     try:
         result = subprocess.run(
             [sys.executable, "-m", "pip", "install", pkg],
-            capture_output=True, text=True,
-            encoding="utf-8", errors="replace",
-            timeout=60, cwd=str(project_dir)
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=60, cwd=str(project_dir),
         )
         return result.returncode == 0
     except Exception:
@@ -471,10 +504,7 @@ def _build_project(
 
     log(f"Project: {proj_name} | Files: {len(files)} | Entry: {entry_point}")
 
-    def _dep_sort_key(fi: dict) -> int:
-        return len(fi.get("imports", []))
-
-    sorted_files = sorted(files, key=_dep_sort_key)
+    sorted_files = _order_files(files)
 
     file_codes: dict[str, str] = {}
 
@@ -486,7 +516,7 @@ def _build_project(
             continue
 
         log(f"Writing {file_path}...")
-        for attempt in range(2):
+        for attempt in range(3):
             try:
                 code = _write_file(
                     file_info=file_info,
@@ -499,18 +529,27 @@ def _build_project(
                 file_codes[file_path] = code
                 time.sleep(0.4)
                 break
-            except RateLimitError:
-                if attempt == 0:
-                    log("Rate limit — waiting 20s...")
-                    time.sleep(20)
+            except (RateLimitError, LLMUnavailableError):
+                if attempt < 2:
+                    wait = 25 * (attempt + 1)
+                    log(f"Provedores indisponíveis para {file_path} — aguardando {wait}s...")
+                    time.sleep(wait)
                 else:
-                    log(f"Rate limit retry failed for {file_path}, skipping.")
+                    log(f"Sem provedor para {file_path} após 3 tentativas.")
             except Exception as e:
                 log(f"Failed to write {file_path}: {e}")
                 break
 
     if not file_codes:
         msg = "I could not write any project files, sir."
+        if speak: speak(msg)
+        return msg
+
+    missing = [f["path"] for f in files if f.get("path") and f["path"] not in file_codes]
+    if missing:
+        _open_vscode(project_dir)
+        msg = (f"Não consegui gerar {', '.join(missing)}, Senhor — provedores indisponíveis. "
+               f"O projeto parcial está em {project_dir}. Não executei para não gastar tentativas.")
         if speak: speak(msg)
         return msg
 

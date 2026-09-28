@@ -155,6 +155,7 @@ A linha de produto atual está pronta para uso seguro e validado. O próximo ava
 ## Fase 8 — Execução do plano de auditoria
 - [x] Fase 1: remoção de actions/coulson_listener.py, tools/encrypt_notification.py e plugins/upload_video.py
 - [x] Fase 2: max_tokens por tipo, vazio/length = falha, .bak antes de sobrescrever, web_search com DDG primeiro, flight_finder resiliente e sem tfs
+- [x] Fase 2B: hotfix (diagnóstico e esforço de raciocínio, breaker por modelo, dev_agent topológico/retry/abort/allowlist, web_search cru sem modo price, resolução de arquivo)
 - [ ] Fase 3: gate de confirmação por voz ("confirmo") para send_message, delete, restart, shutdown
 - [ ] Fase 4: watchdog "aguardando resposta" + correção do close_gate do wake word
 - [ ] Fase 5: higiene (cofre 600k iterações, vault configurável, get_home_dir, reindex duplicado, código morto, DESTRUCTIVE_ACTIONS)

@@ -26,17 +26,18 @@ TOOL_DECLARATIONS = [
     {
         "name": "web_search",
         "description": (
-            "Searches the web. Use for ANY question about current facts, events, prices, "
-            "or topics — always prefer this over guessing. "
-            "Modes: 'search' (default), 'news' (latest headlines on a topic), "
-            "'research' (deep comprehensive answer), 'price' (product cost lookup), "
-            "'compare' (side-by-side comparison of items)."
+            "Searches the web and returns RAW results (titles, snippets, links). "
+            "Use for ANY question about current facts, events, prices, or topics — always prefer this over guessing. "
+            "Summarize the results yourself in 2-4 short sentences and NEVER state values that are not in the results; "
+            "if they lack the answer, say so and offer to open the relevant sites. "
+            "Modes: 'search' (default; also for prices), 'news' (latest headlines), "
+            "'research' (more results), 'compare' (side-by-side items)."
         ),
         "parameters": {
             "type": "OBJECT",
             "properties": {
                 "query":  {"type": "STRING", "description": "Search query or topic"},
-                "mode":   {"type": "STRING", "description": "search | news | research | price | compare"},
+                "mode":   {"type": "STRING", "description": "search | news | research | compare"},
                 "items":  {"type": "ARRAY",  "items": {"type": "STRING"}, "description": "Items to compare (compare mode)"},
                 "aspect": {"type": "STRING", "description": "Comparison aspect: price | specs | reviews | features"},
             },
@@ -208,7 +209,7 @@ TOOL_DECLARATIONS = [
     },
     {
         "name": "file_controller",
-        "description": "Manages files and folders: list, create, delete, move, copy, rename, read, write, find, disk usage.",
+        "description": "Manages files and folders: list, create, delete, move, copy, rename, read, write, find, disk usage. To edit existing code use code_helper (action=edit) with file_path.",
         "parameters": {
             "type": "OBJECT",
             "properties": {
@@ -264,7 +265,7 @@ TOOL_DECLARATIONS = [
                 "description": {"type": "STRING", "description": "What the code should do or what change to make"},
                 "language":    {"type": "STRING", "description": "Programming language (default: python)"},
                 "output_path": {"type": "STRING", "description": "Where to save the file"},
-                "file_path":   {"type": "STRING", "description": "Path to existing file for edit/explain/run/build"},
+                "file_path":   {"type": "STRING", "description": "Caminho do arquivo existente. Aceita atalhos ('desktop/TESTE123', 'downloads/x.py') e nome sem extensão."},
                 "code":        {"type": "STRING", "description": "Raw code string for explain"},
                 "args":        {"type": "STRING", "description": "CLI arguments for run/build"},
                 "timeout":     {"type": "INTEGER", "description": "Execution timeout in seconds (default: 30)"},

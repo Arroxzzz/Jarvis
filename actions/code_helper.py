@@ -543,6 +543,9 @@ def code_helper(
     language    = p.get("language", "python").strip()
     output_path = p.get("output_path", "").strip()
     file_path   = p.get("file_path", "").strip()
+    if file_path:
+        from actions.file_controller import resolve_existing
+        file_path = str(resolve_existing(file_path))
     code        = p.get("code", "").strip()
     args        = p.get("args", [])
     timeout     = int(p.get("timeout", 30))

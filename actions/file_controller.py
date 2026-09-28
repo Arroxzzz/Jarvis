@@ -1,4 +1,5 @@
 import os
+import glob
 import shutil
 import platform
 import subprocess
@@ -88,6 +89,29 @@ def _resolve_path(raw: str) -> Path:
         return shortcuts[head.lower()] / rest if rest else shortcuts[head.lower()]
 
     return Path(raw).expanduser()
+
+
+def resolve_existing(raw: str) -> Path:
+    """Resolve atalhos e aceita uma única correspondência 'nome.*' na mesma pasta."""
+    p = _resolve_path(raw)
+    if p.exists():
+        return p
+    try:
+        hits = [x for x in p.parent.glob(glob.escape(p.stem) + ".*") if x.is_file()]
+    except Exception:
+        return p
+    return hits[0] if len(hits) == 1 else p
+
+
+def _match_name(path: str, name: str) -> str:
+    base = _resolve_path(path)
+    if (base / name).exists():
+        return name
+    try:
+        hits = [x for x in base.glob(glob.escape(Path(name).stem) + ".*") if x.is_file()]
+    except Exception:
+        return name
+    return hits[0].name if len(hits) == 1 else name
 
 
 def _human_label(path: str, name: str = "") -> str:
@@ -542,6 +566,8 @@ def file_controller(
     action = params.get("action", "").lower().strip()
     path   = params.get("path", "desktop")
     name   = params.get("name", "")
+    if name and action in ("read", "open", "info", "rename", "move", "copy", "delete"):
+        name = _match_name(path, name)
 
     if player:
         player.write_log(f"[file] {action} {name or path}")

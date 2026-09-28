@@ -463,6 +463,8 @@ async def test_run_tool_bound_timeout_message():
 def test_resilient_text_call_falls_back_after_groq_retry_after(monkeypatch):
     import core.llm_client as llm_client
 
+    llm_client._PROVIDER_STATE.clear()
+
     def fake_call_llm_text(prompt, system=None, model=None, timeout=120, force_provider=None, **kwargs):
         if force_provider == "groq":
             raise llm_client.ProviderRequestError("groq", "429 Too Many Requests", 429, 7)
@@ -540,6 +542,7 @@ def test_call_llm_text_rejects_empty_and_optional_truncation(monkeypatch):
 def test_resilient_text_call_retries_empty_and_supports_raise_on_fail(monkeypatch):
     import core.llm_client as lc
 
+    lc._PROVIDER_STATE.clear()
     attempts = []
 
     def fake_call(prompt, **kwargs):
@@ -594,28 +597,145 @@ def test_code_helper_save_file_backs_up_and_rejects_empty(tmp_path, monkeypatch)
     assert target.read_text(encoding="utf-8") == "novo"
 
 
-def test_web_answer_uses_ddg_evidence_and_raw_fallback(monkeypatch):
-    from actions import web_search
+def test_llm_payload_sets_reasoning_options_and_diagnostic(monkeypatch):
     import core.llm_client as lc
 
-    captured = []
+    payloads = []
+    current = {"content": "ok", "finish_reason": "stop"}
+
+    class FakeResponse:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            if current["content"] == "":
+                return {
+                    "choices": [{
+                        "message": {"content": ""},
+                        "finish_reason": "length",
+                    }],
+                    "usage": {
+                        "completion_tokens": 12,
+                        "completion_tokens_details": {"reasoning_tokens": 9},
+                    },
+                }
+            return {"choices": [{
+                "message": {"content": current["content"]},
+                "finish_reason": current["finish_reason"],
+            }]}
+
+    def fake_post(url, *, json, **kwargs):
+        payloads.append(json)
+        return FakeResponse()
+
+    monkeypatch.setattr(lc, "_has_key", lambda provider: True)
+    monkeypatch.setattr(lc, "_auth_headers", lambda provider=None: {})
+    monkeypatch.setattr(lc.requests, "post", fake_post)
+
+    lc.call_llm_text("prompt", model="openai/gpt-oss-20b", force_provider="groq", reasoning_effort="low")
+    assert payloads[-1]["reasoning_effort"] == "low"
+    lc.call_llm_text("prompt", model="glm", force_provider="openrouter", reasoning_effort="low")
+    assert payloads[-1]["reasoning"] == {"effort": "low"}
+    lc.call_llm_text("prompt", model="openai/gpt-oss-20b", force_provider="groq")
+    assert "reasoning_effort" not in payloads[-1]
+    assert "reasoning" not in payloads[-1]
+
+    current["content"] = ""
+    with pytest.raises(lc.LLMOutputError) as exc:
+        lc.call_llm_text("prompt", force_provider="groq")
+    assert "finish=" in str(exc.value)
+    assert "out=" in str(exc.value)
+
+
+def test_resilient_text_call_breaker_is_per_model(monkeypatch):
+    import core.llm_client as lc
+
+    lc._PROVIDER_STATE.clear()
+    attempted = []
+
+    def fake_call(prompt, model, force_provider, **kwargs):
+        attempted.append(model)
+        if model == "openai/gpt-oss-120b":
+            raise lc.ProviderRequestError("groq", "429", 429, 30)
+        return "ok"
+
+    monkeypatch.setattr(lc, "call_llm_text", fake_call)
+    assert lc.resilient_text_call("prompt", task_type="code") == "ok"
+    assert attempted == ["openai/gpt-oss-120b", "openai/gpt-oss-20b"]
+
+
+def test_dev_agent_orders_files_by_dependencies():
+    from actions.dev_agent import _order_files
+
+    files = [
+        {"path": "main.py", "imports": ["core.engine"]},
+        {"path": "core/engine.py", "imports": ["core.game", "utils.helpers"]},
+        {"path": "core/game.py", "imports": ["utils.helpers"]},
+        {"path": "utils/helpers.py", "imports": []},
+    ]
+    assert [f["path"] for f in _order_files(files)] == [
+        "utils/helpers.py", "core/game.py", "core/engine.py", "main.py",
+    ]
+
+
+def test_dev_agent_auto_install_allowlist_and_project_modules(tmp_path, monkeypatch):
+    from actions import dev_agent
+
+    core = tmp_path / "core"
+    core.mkdir()
+    monkeypatch.setattr(
+        dev_agent.subprocess, "run",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("pip não deveria rodar")),
+    )
+    assert not dev_agent._try_auto_install("No module named 'core.engine'", tmp_path)
+    assert not dev_agent._try_auto_install("No module named 'pacote_inventado'", tmp_path)
+
+    calls = []
+
+    class Result:
+        returncode = 0
+
+    monkeypatch.setattr(dev_agent.subprocess, "run", lambda *args, **kwargs: calls.append(args[0]) or Result())
+    assert dev_agent._try_auto_install("No module named 'pygame'", tmp_path)
+    assert calls[-1][-2:] == ["install", "pygame"]
+
+
+def test_dev_agent_dependency_install_filters_unknown_packages(monkeypatch, tmp_path):
+    from actions import dev_agent
+
+    calls = []
+
+    class Result:
+        returncode = 1
+        stderr = ""
+
+    def fake_run(command, **kwargs):
+        calls.append(command)
+        return Result()
+
+    monkeypatch.setattr(dev_agent.subprocess, "run", fake_run)
+    dev_agent._install_dependencies(["pygame", "pacote_inventado"], tmp_path)
+    installs = [cmd for cmd in calls if "install" in cmd]
+    assert len(installs) == 1
+    assert "pygame" in installs[0]
+    assert "pacote_inventado" not in installs[0]
+
+
+def test_web_search_returns_untrusted_raw_ddg_results_without_llm(monkeypatch):
+    from actions import web_search
     evidence = [{"title": "Fato atual", "snippet": "Resultado encontrado", "url": "https://example.test"}]
     monkeypatch.setattr(web_search, "_ddg_search", lambda query, max_results=6: evidence)
+    monkeypatch.setattr(
+        web_search, "resilient_text_call",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("LLM chamado")),
+    )
+    result = web_search._search("x")
+    assert result.startswith(web_search._UNTRUSTED)
+    assert "Resultado encontrado" in result
 
-    def fake_llm(prompt, task_type="general"):
-        captured.append(prompt)
-        return "Resumo baseado nas fontes"
-
-    monkeypatch.setattr(web_search, "resilient_text_call", fake_llm)
-    assert web_search._web_answer("pergunta", ["consulta"]) == "Resumo baseado nas fontes"
-    assert "Resultado encontrado" in captured[-1]
-
-    monkeypatch.setattr(web_search, "resilient_text_call", lambda *args, **kwargs: lc.LLM_FAIL_MSG)
-    assert "Resultado encontrado" in web_search._web_answer("pergunta", ["consulta"])
-
-    monkeypatch.setattr(web_search, "_ddg_search", lambda query, max_results=6: [])
-    with pytest.raises(ValueError, match="Sem resultados"):
-        web_search._web_answer("pergunta", ["consulta"])
+    monkeypatch.setattr(web_search, "_search", lambda query: "resultado cru")
+    assert web_search.web_search({"query": "x", "mode": "price"}) == "resultado cru"
+    assert not hasattr(web_search, "_price")
 
 
 def test_web_news_never_uses_llm_without_ddg_results(monkeypatch):
@@ -627,6 +747,26 @@ def test_web_news_never_uses_llm_without_ddg_results(monkeypatch):
         lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("LLM chamado")),
     )
     assert web_search._news("notícias").startswith("No news found")
+
+
+def test_file_controller_resolves_unique_extension_match(tmp_path, monkeypatch):
+    from actions import file_controller
+
+    source = tmp_path / "TESTE123.py"
+    source.write_text("conteúdo", encoding="utf-8")
+    assert file_controller.resolve_existing(str(tmp_path / "TESTE123")) == source
+    assert file_controller.resolve_existing(str(tmp_path / "TESTE123.txt")) == source
+
+    ambiguous = tmp_path / "ambiguous.py"
+    (tmp_path / "ambiguous.md").write_text("doc", encoding="utf-8")
+    ambiguous.write_text("code", encoding="utf-8")
+    requested = tmp_path / "ambiguous.txt"
+    assert file_controller.resolve_existing(str(requested)) == requested
+
+    monkeypatch.setattr(file_controller, "_is_safe_path", lambda path: True)
+    assert file_controller.file_controller({
+        "action": "read", "path": str(tmp_path), "name": "TESTE123",
+    }) == "conteúdo"
 
 
 def test_flight_finder_uses_fallback_parser_without_fixed_dates(monkeypatch):
