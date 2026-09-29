@@ -500,7 +500,8 @@ class JarvisLive:
         self._interrupted = True
         write_guard.clear_pending()
         self._awaiting_response = False
-        had_active = bool(self._active_tool_tasks) or bool(self._active_cancel_events)
+        bg_cancelled = self._tasks.cancel_all_running()
+        had_active = bool(self._active_tool_tasks) or bool(self._active_cancel_events) or bg_cancelled > 0
         for t in self._active_tool_tasks:
             if not t.done():
                 t.cancel()
@@ -769,7 +770,7 @@ class JarvisLive:
             category = args.get("category", "notes")
             key = args.get("key", "")
             value = args.get("value", "")
-            confirmed = bool(args.get("confirmed"))
+            user_confirmed = bool(args.get("user_confirmed", False))
 
             if key and value:
                 from core.memory_policy import classify_memory, record_memory
@@ -784,7 +785,7 @@ class JarvisLive:
                         response={"result": "Memória sensível rejeitada: não será salva no vault.", "silent": True}
                     )
 
-                if proposal.mode == "suggested" and not confirmed:
+                if proposal.mode == "suggested" and not user_confirmed:
                     print(f"[Memory] ⏳ save_memory waiting for confirmation: {category}/{key}")
                     if not self.ui.muted:
                         self.ui.set_state("LISTENING")
@@ -793,7 +794,11 @@ class JarvisLive:
                         response={"result": "Memória sugerida: confirmar gravação antes de salvar no vault.", "silent": True}
                     )
 
-                outcome = record_memory(value, confirmed=confirmed or proposal.mode in {"automatic", "explicit"}, project=category, origin="tool")
+                outcome = record_memory(
+                    value,
+                    confirmed=user_confirmed or proposal.mode in {"automatic", "explicit"},
+                    project=category, origin="tool",
+                )
                 if outcome.get("saved"):
                     print(f"[Memory] 💾 save_memory: {category}/{key} = {value}")
                 else:

@@ -121,14 +121,18 @@ def build_boot_digest(max_results: int = 5, max_chars: int = 1500) -> str:
 
 
 def search_notes(query: str, max_results: int = 5) -> str:
-    """Busca textual simples (grep) — sem embeddings, leve e gratuito."""
+    """Busca por título e conteúdo, sem embeddings e com custo mínimo."""
     query_low = query.lower()
     hits = []
     for path in KNOWLEDGE_DIR.rglob("*.md"):
+        title_match = query_low in path.stem.lower()
         text = path.read_text(encoding="utf-8", errors="ignore")
-        if query_low in text.lower():
-            idx = text.lower().find(query_low)
-            snippet = text[max(0, idx - 60):idx + 100].replace("\n", " ")
+        idx = text.lower().find(query_low)
+        if title_match or idx != -1:
+            if idx != -1:
+                snippet = text[max(0, idx - 60):idx + 100].replace("\n", " ")
+            else:
+                snippet = text.strip().replace("\n", " ")[:160]
             hits.append(f"[{path.stem}] ...{snippet}...")
         if len(hits) >= max_results:
             break

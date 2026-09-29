@@ -275,7 +275,13 @@ TOOL_DECLARATIONS = [
     },
     {
         "name": "dev_agent",
-        "description": "Builds complete multi-file projects from scratch: plans, writes files, installs deps, opens VSCode, runs and fixes errors.",
+        "description": (
+            "Builds complete multi-file projects from scratch: plans, writes files, installs deps, "
+            "opens VSCode, runs and fixes errors. RUNS IN THE BACKGROUND and returns immediately with "
+            "[TAREFA_INICIADA] — announce that it started in one sentence and do NOT call it again "
+            "for the same request. The final result arrives later as a [BUILD_CONCLUIDO] message. "
+            "Use background_status to check progress and cancel_background_task to stop it."
+        ),
         "parameters": {
             "type": "OBJECT",
             "properties": {
@@ -286,6 +292,23 @@ TOOL_DECLARATIONS = [
             },
             "required": ["description"]
         }
+    },
+    {
+        "name": "background_status",
+        "description": (
+            "Returns the status of background tasks (e.g. dev_agent builds). Use when the user asks "
+            "how a build is going, if it finished, or what is running in the background."
+        ),
+        "parameters": {"type": "OBJECT", "properties": {}},
+    },
+    {
+        "name": "cancel_background_task",
+        "description": (
+            "Cooperatively signals cancellation of any running background task (e.g. a dev_agent "
+            "build). Use when the user says to cancel/stop/abort the build. May take a few seconds "
+            "to actually stop. Does not affect the assistant's speech or the microphone."
+        ),
+        "parameters": {"type": "OBJECT", "properties": {}},
     },
     {
         "name": "computer_control",
@@ -459,9 +482,10 @@ TOOL_DECLARATIONS = [
     {
         "name": "find_context",
         "description": (
-            "Finds relevant local files and folders on the user's machine using a safe, bounded search. "
-            "Use only for file lookup in known user folders such as Desktop, Downloads, and Documents. "
-            "Never scan the full disk. If multiple strong matches exist, return them and ask for confirmation."
+            "Finds relevant local files and folders on the user's machine (Desktop, Downloads, Documents) using "
+            "a safe, bounded search. Do NOT use this for notes saved in the Obsidian vault/memory — use "
+            "knowledge_note(action=search) for that instead. Never scan the full disk. If multiple strong "
+            "matches exist, return them and ask for confirmation."
         ),
         "parameters": {
             "type": "OBJECT",
@@ -499,6 +523,16 @@ TOOL_DECLARATIONS = [
                 },
                 "key":   {"type": "STRING", "description": "Short snake_case key (e.g. name, favorite_food, sister_name)"},
                 "value": {"type": "STRING", "description": "Concise value in English (e.g. Fatih, pizza, older sister)"},
+                "user_confirmed": {
+                    "type": "BOOLEAN",
+                    "description": (
+                        "true SOMENTE se o usuário pediu explicitamente para lembrar/salvar/anotar/"
+                        "registrar isso agora (ex.: disse 'registre isso', 'lembre disso', 'anote', "
+                        "'salve isso', 'grave isso'). false se você está salvando por iniciativa "
+                        "própria, sem o usuário ter pedido diretamente. Quando true, é salvo na hora, "
+                        "sem pedir confirmação."
+                    )
+                }
             },
             "required": ["category", "key", "value"]
         }
@@ -507,10 +541,11 @@ TOOL_DECLARATIONS = [
         "name": "knowledge_note",
         "description": (
             "Gerencia notas de conhecimento pessoal em Markdown (estilo Obsidian) — "
-            "diferente de save_memory (que guarda fatos curtos estruturados). Use "
-            "para anotações mais longas: resumos de aula, ideias de projeto, "
-            "planejamento pessoal. Ações: write (criar/sobrescrever), append "
-            "(adicionar ao final), read, list, search."
+            "diferente de save_memory (que guarda fatos curtos estruturados). USE ESTA TOOL, e não find_context, "
+            "sempre que o usuário perguntar o que ele salvou/anotou/guardou na memória ou no vault "
+            "(ex.: 'o que eu falei na nota X', 'pesquisa isso no seu vault', 'o que eu salvei sobre Y'). "
+            "find_context é só para arquivos comuns (desktop, downloads, documentos), não para notas do vault. "
+            "Ações: write (criar/sobrescrever), append (adicionar ao final), read, list, search."
         ),
         "parameters": {
             "type": "OBJECT",

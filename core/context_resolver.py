@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Iterable
 
 from core import context_index
+from core.knowledge_vault import OBSIDIAN_VAULT
 from core.paths import get_home_dir
 
 
@@ -40,11 +41,12 @@ def _describe_path_location(path_value: str | os.PathLike[str] | None) -> str:
 
 
 def _default_roots() -> list[Path]:
-    home = get_home_dir()
+    home = Path.home()
     return [
         home / "Desktop",
         home / "Downloads",
         home / "Documents",
+        OBSIDIAN_VAULT,
     ]
 
 

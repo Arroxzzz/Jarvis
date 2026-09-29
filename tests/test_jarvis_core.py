@@ -146,6 +146,17 @@ def test_search_finds_match():
     assert "demo" in kv_module.search_notes("Demolidor")
 
 
+def test_search_matches_note_title_and_content():
+    kv_module.write_note(
+        "Instrução de Salvamento Padrão",
+        "Instrução permanente: comandos como 'guarda isso' devem salvar.",
+    )
+    assert "Instrução de Salvamento Padrão" in kv_module.search_notes(
+        "Instrução de Salvamento Padrão"
+    )
+    assert "Instrução de Salvamento Padrão" in kv_module.search_notes("comandos como")
+
+
 def test_search_no_match():
     kv_module.write_note("nota", "conteúdo irrelevante")
     assert "Nada encontrado" in kv_module.search_notes("Thanos")
@@ -224,6 +235,30 @@ def test_context_resolver_uses_default_roots_when_none_provided(monkeypatch, tmp
     candidates = find_context_candidates("relatorio final pdf")
     assert candidates
     assert candidates[0]["name"] == "relatorio_final_jan_2026.pdf"
+
+
+def test_context_resolver_default_roots_include_vault(monkeypatch, tmp_path):
+    import core.context_resolver as resolver
+    from core.knowledge_vault import OBSIDIAN_VAULT
+
+    monkeypatch.setattr(resolver, "OBSIDIAN_VAULT", OBSIDIAN_VAULT)
+    assert OBSIDIAN_VAULT in resolver._default_roots()
+
+
+def test_context_resolver_finds_vault_note_without_explicit_roots(monkeypatch, tmp_path):
+    import core.context_resolver as resolver
+
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    note = vault / "Nota_Teste.md"
+    note.write_text("Instrução de salvamento", encoding="utf-8")
+    home = tmp_path / "home"
+    monkeypatch.setattr(resolver, "OBSIDIAN_VAULT", vault)
+    monkeypatch.setattr("pathlib.Path.home", lambda: home)
+    monkeypatch.setattr(resolver.context_index, "index_exists", lambda: False)
+
+    candidates = resolver.find_context_candidates("nota teste")
+    assert any(candidate["path"] == str(note) for candidate in candidates)
 
 
 def test_context_resolver_prefers_exact_extension_and_name_overlap(tmp_path):
@@ -1455,7 +1490,6 @@ def test_main_gate_respects_silent_result(monkeypatch):
     ))
     assert spoken == []
     assert "SYS: ok" in live.ui.logs
-
     live._gate_decide((
         "confirm",
         {"summary": "ação", "audit": None, "run": lambda: "ok", "silent_result": False},
@@ -1463,6 +1497,36 @@ def test_main_gate_respects_silent_result(monkeypatch):
     ))
     assert len(spoken) == 1
     assert spoken[0].startswith("[ACAO_EXECUTADA")
+
+
+def test_save_memory_with_user_confirmed_saves_immediately_no_voice_gate():
+    from main import JarvisLive
+    import core.knowledge_vault as kv_module
+
+    class DummyUI:
+        muted = True
+
+        def set_state(self, *_args, **_kwargs):
+            return None
+
+    live = object.__new__(JarvisLive)
+    live.ui = DummyUI()
+
+    class DummyFC:
+        id = "m3"
+        name = "save_memory"
+        args = {
+            "category": "preferences",
+            "key": "project_priority",
+            "value": "Prioriza projetos otimizados, rápidos e funcionais.",
+            "user_confirmed": True,
+        }
+
+    before = kv_module.list_notes()
+    response = asyncio.run(live._execute_tool_impl(DummyFC()))
+
+    assert response.response["result"] == "ok"
+    assert len(kv_module.list_notes()) > len(before)
 
 
 def test_shutdown_jarvis_requires_confirmation_before_scheduling_shutdown():
@@ -1534,3 +1598,130 @@ def test_wake_word_gate_disabled_forwards_audio(monkeypatch):
     assert gate._available is False
     assert gate.feed(chunk) == chunk
     gate.close_gate()
+
+
+def test_background_task_tracker_runs_reports_status_and_cancels():
+    from core.background_tasks import BackgroundTaskTracker
+    import threading
+    import time as _time
+
+    tracker = BackgroundTaskTracker()
+    started = threading.Event()
+
+    def _work(cancel_event):
+        started.set()
+        cancel_event.wait(2)
+        return "cancelado" if cancel_event.is_set() else "completo"
+
+    task_id = tracker.start("teste", _work)
+    assert started.wait(1)
+    assert tracker.get(task_id)["status"] == "running"
+    assert "teste" in tracker.snapshot()
+
+    assert tracker.cancel_all_running() == 1
+    for _ in range(30):
+        if tracker.get(task_id)["status"] != "running":
+            break
+        _time.sleep(0.05)
+    assert tracker.get(task_id)["status"] == "cancelled"
+    assert tracker.get(task_id)["result"] == "cancelado"
+    assert tracker.cancel_all_running() == 0
+
+
+def test_dev_agent_tool_runs_in_background_and_announces_result(monkeypatch):
+    import core.tool_registry as tr
+    from core.background_tasks import BackgroundTaskTracker
+
+    def fake_dev_agent(parameters, response=None, player=None, session_memory=None,
+                       speak=None, cancel_event=None):
+        assert speak is None
+        return "build ok"
+
+    monkeypatch.setattr(tr, "dev_agent", fake_dev_agent)
+
+    class FakeJarvis:
+        def __init__(self):
+            self._tasks = BackgroundTaskTracker()
+            self.speak_calls = []
+
+        def speak(self, text):
+            self.speak_calls.append(text)
+
+    jarvis = FakeJarvis()
+    result = tr._dev_agent_tool({"description": "x"}, player=None, speak=None, jarvis=jarvis)
+
+    assert result.startswith("[TAREFA_INICIADA")
+    for _ in range(30):
+        if jarvis.speak_calls:
+            break
+        __import__("time").sleep(0.05)
+    assert jarvis.speak_calls and "[BUILD_CONCLUIDO" in jarvis.speak_calls[0]
+    assert "build ok" in jarvis.speak_calls[0]
+
+
+def test_dev_agent_tool_falls_back_to_sync_without_jarvis(monkeypatch):
+    import core.tool_registry as tr
+
+    def fake_dev_agent(parameters, response=None, player=None, session_memory=None,
+                       speak=None, cancel_event=None):
+        return "sincrono ok"
+
+    monkeypatch.setattr(tr, "dev_agent", fake_dev_agent)
+    result = tr._dev_agent_tool({"description": "x"}, player=None, speak=None, jarvis=None)
+    assert result == "sincrono ok"
+
+
+def test_interrupt_cancels_background_tasks_and_defers_cancel_phrase():
+    from main import JarvisLive
+
+    class FakeTasks:
+        def cancel_all_running(self):
+            return 1
+
+    class DummyUI:
+        def write_log(self, *_a, **_k):
+            pass
+
+    live = object.__new__(JarvisLive)
+    live._interrupted = False
+    live._active_tool_tasks = []
+    live._active_cancel_events = []
+    live._tasks = FakeTasks()
+    live.audio_in_queue = None
+    live._turn_done_event = None
+    live.ui = DummyUI()
+    live.set_speaking = lambda *_a, **_k: None
+    live.speak = lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("não devia falar direto"))
+
+    live.interrupt()
+
+    assert live._interrupted is True
+    assert getattr(live, "_pending_cancel_phrase", None)
+
+
+def test_interrupt_speaks_directly_when_nothing_was_active():
+    from main import JarvisLive
+
+    class FakeTasks:
+        def cancel_all_running(self):
+            return 0
+
+    class DummyUI:
+        def write_log(self, *_a, **_k):
+            pass
+
+    live = object.__new__(JarvisLive)
+    live._interrupted = False
+    live._active_tool_tasks = []
+    live._active_cancel_events = []
+    live._tasks = FakeTasks()
+    live.audio_in_queue = None
+    live._turn_done_event = None
+    live.ui = DummyUI()
+    live.set_speaking = lambda *_a, **_k: None
+    spoken = []
+    live.speak = lambda text: spoken.append(text)
+
+    live.interrupt()
+
+    assert spoken

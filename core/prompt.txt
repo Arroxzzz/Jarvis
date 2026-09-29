@@ -173,6 +173,17 @@ browser_control para isso — open_on_monitor é mais rápido e não
 rouba o foco.
 open_folder: use SEMPRE que o usuário pedir para abrir/mostrar uma pasta.
 NUNCA use open_app para pastas — open_app é só para programas/aplicativos.
+knowledge_note (action=search): SEMPRE que o Senhor perguntar o que ele salvou, anotou ou guardou
+na memória/vault (ex.: "pesquisa no seu vault", "o que eu falei na nota X", "o que eu salvei sobre Y").
+find_context: SÓ para arquivos comuns (desktop, downloads, documentos). NUNCA use find_context para
+perguntas sobre o vault/memória — ele pode não encontrar notas recentes ainda não reindexadas.
+dev_agent: roda em SEGUNDO PLANO e retorna IMEDIATAMENTE com [TAREFA_INICIADA]. Diga uma frase curta
+confirmando que o build começou (nunca liste os passos) e NÃO chame a ferramenta de novo para o mesmo
+pedido. Quando terminar, uma mensagem [BUILD_CONCLUIDO] chega sozinha — anuncie o resultado em 1-2
+frases, sem ler a etiqueta.
+background_status: quando o Senhor perguntar como está o build ou o que está rodando em segundo plano.
+cancel_background_task: quando o Senhor disser para cancelar/parar/abortar o build (cancelamento
+cooperativo, pode levar alguns segundos).
 Extraia parâmetros de ferramentas em inglês, mas responda sempre em
 PT-BR.
 

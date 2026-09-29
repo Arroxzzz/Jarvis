@@ -146,8 +146,40 @@ def _code_helper_tool(args: dict, *, player=None, speak=None, **_extra):
 
 
 @register_tool("dev_agent", declaration=_decl("dev_agent"), kind="advanced")
-def _dev_agent_tool(args: dict, *, player=None, speak=None, **_extra):
-    return dev_agent(parameters=args, player=player, speak=speak, cancel_event=None)
+def _dev_agent_tool(args: dict, *, player=None, speak=None, jarvis=None, **_extra):
+    def _work(cancel_event):
+        result = dev_agent(parameters=args, player=player, speak=None, cancel_event=cancel_event)
+        if jarvis is not None:
+            try:
+                jarvis.speak(f"[BUILD_CONCLUIDO — fale agora, breve, sem ler a etiqueta] {result}")
+            except Exception:
+                pass
+        return result
+
+    if jarvis is None or not hasattr(jarvis, "_tasks"):
+        return dev_agent(parameters=args, player=player, speak=speak, cancel_event=None)
+
+    task_id = jarvis._tasks.start("dev_agent", _work)
+    return (
+        f"[TAREFA_INICIADA em segundo plano, id={task_id}] Diga ao Senhor, em uma frase, que o "
+        "build começou e que você avisa quando terminar. NÃO chame esta ferramenta de novo para "
+        "este mesmo pedido; se ele perguntar o andamento, use background_status."
+    )
+
+
+@register_tool("background_status", declaration=_decl("background_status"), kind="simple")
+def _background_status_tool(args: dict, *, jarvis=None, **_extra):
+    if jarvis is None or not hasattr(jarvis, "_tasks"):
+        return "Nenhuma tarefa em segundo plano."
+    return jarvis._tasks.snapshot()
+
+
+@register_tool("cancel_background_task", declaration=_decl("cancel_background_task"), kind="simple")
+def _cancel_background_task_tool(args: dict, *, jarvis=None, **_extra):
+    if jarvis is None or not hasattr(jarvis, "_tasks"):
+        return "Nenhuma tarefa em segundo plano para cancelar."
+    n = jarvis._tasks.cancel_all_running()
+    return f"{n} tarefa(s) sinalizada(s) para cancelar." if n else "Nenhuma tarefa em segundo plano rodando."
 
 
 @register_tool("web_search", declaration=_decl("web_search"), kind="advanced")
