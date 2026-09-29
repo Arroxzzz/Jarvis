@@ -556,6 +556,11 @@ def open_folder(path: str, confirmed: bool = False) -> str:
     except Exception as exc:
         return f"Não consegui abrir a pasta '{label}' no Explorer: {exc}"
 
+
+def _delete_confirmed(path: str, name: str, label: str) -> str:
+    return delete_file(path, name=name)
+
+
 def file_controller(
     parameters: dict = None,
     response=None,
@@ -572,15 +577,21 @@ def file_controller(
     if player:
         player.write_log(f"[file] {action} {name or path}")
 
-    confirmed = str(params.get("confirmed", "")).lower() in ("yes", "true", "1", "confirm")
     label = _human_label(path, name)
-    confirmation = (
-        write_guard.require_confirmation(action, label, confirmed)
-        if action == "delete" else None
-    )
-    if confirmation:
-        write_guard.log_action(action, label, False)
-        return confirmation
+    if action == "delete":
+        base   = _resolve_path(path)
+        target = (base / name) if name else base
+        if not _is_safe_path(target):
+            return f"Access denied: {target.name}"
+        if not target.exists():
+            return f"Not found: {target.name}"
+        return write_guard.request_confirmation(
+            key=f"delete|{target}",
+            summary=f"apagar '{label}' (vai para a lixeira)",
+            run=lambda: _delete_confirmed(path, name, label),
+            player=player,
+            audit=("delete", label),
+        )
 
     try:
         if action == "list":
@@ -595,11 +606,6 @@ def file_controller(
 
         elif action == "create_folder":
             result = create_folder(path, name=name)
-            write_guard.log_action(action, label, True)
-            return result
-
-        elif action == "delete":
-            result = delete_file(path, name=name)
             write_guard.log_action(action, label, True)
             return result
 

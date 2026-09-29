@@ -632,6 +632,12 @@ Rules:
         print(f"[Settings] Intent detection failed: {e}")
         return {"action": description.lower().replace(" ", "_"), "value": None}
 
+
+def _power_confirmed(action: str) -> str:
+    ACTION_MAP[action]()
+    return f"Done: {action}."
+
+
 def computer_settings(
     parameters: dict = None,
     response=None,
@@ -685,15 +691,15 @@ def computer_settings(
     if player:
         player.write_log(f"[Settings] {action}")
 
-    confirmed = str(params.get("confirmed", "")).lower() in ("yes", "true", "1", "confirm")
-    confirmation = write_guard.require_confirmation(action, action, confirmed)
-    if confirmation:
-        if action in ("restart", "shutdown"):
-            return (
-                f"This will {action} the computer. "
-                f"Please confirm by calling again with confirmed=yes."
-            )
-        return confirmation
+    if action in ("restart", "shutdown"):
+        verb = "reiniciar" if action == "restart" else "desligar"
+        return write_guard.request_confirmation(
+            key=action,
+            summary=f"{verb} o computador (contagem de 10 segundos)",
+            run=lambda: _power_confirmed(action),
+            player=player,
+            audit=(action, "computer"),
+        )
 
     if action == "volume_set":
         try:
@@ -737,8 +743,6 @@ def computer_settings(
         return f"Unknown action: '{raw_action}'."
 
     try:
-        if action in write_guard.DESTRUCTIVE_ACTIONS:
-            write_guard.log_action(action, "computer", True)
         func()
         return f"Done: {action}."
     except Exception as e:

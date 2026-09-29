@@ -7,7 +7,17 @@ estruturados (identity/preferences/etc).
 import re
 from pathlib import Path
 
-OBSIDIAN_VAULT = Path(r"D:\Memoria_Jarvis")
+from config import get_config
+from core.paths import get_home_dir
+
+
+def _resolve_vault_dir(cfg: dict, home: Path) -> Path:
+    """Caminho configurável do vault, com fallback portátil."""
+    raw = (cfg.get("vault_path") or "").strip()
+    return Path(raw).expanduser() if raw else home / "JarvisVault"
+
+
+OBSIDIAN_VAULT = _resolve_vault_dir(get_config(), get_home_dir())
 
 KNOWLEDGE_DIR = OBSIDIAN_VAULT
 KNOWLEDGE_DIR.mkdir(parents=True, exist_ok=True)

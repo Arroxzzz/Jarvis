@@ -210,3 +210,8 @@
 {"ts": "2026-09-28T18:08:04.687148+00:00", "action": "delete", "target": "delete_me.txt", "allowed": true}
 {"ts": "2026-09-28T18:08:04.725475+00:00", "action": "move", "target": "origem.txt", "allowed": true}
 {"ts": "2026-09-28T18:08:04.739559+00:00", "action": "delete", "target": "lista.txt", "allowed": false}
+{"ts": "2026-09-28T20:54:01.636195+00:00", "action": "delete", "target": "TESTE_APAGAR.txt", "allowed": false}
+{"ts": "2026-09-28T20:54:23.611314+00:00", "action": "delete", "target": "TESTE_APAGAR.txt", "allowed": true}
+{"ts": "2026-09-28T20:56:44.344238+00:00", "action": "delete", "target": "teste123.txt", "allowed": false}
+{"ts": "2026-09-29T05:47:09.674310+00:00", "action": "find", "target": "Memoria_Jarvis", "allowed": true}
+{"ts": "2026-09-29T05:56:23.752855+00:00", "action": "shutdown_jarvis", "target": "assistant", "allowed": false}

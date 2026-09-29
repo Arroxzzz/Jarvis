@@ -21,6 +21,7 @@ from actions.system_monitor import get_system_status
 from actions.web_search import web_search as web_search_action
 from actions.weather_report import weather_action
 from actions.youtube_video import youtube_video
+from core import write_guard
 from core.tool_declarations import TOOL_DECLARATIONS
 
 
@@ -99,13 +100,24 @@ def _file_controller_tool(args: dict, *, player=None, session_memory=None, **_ex
 
 @register_tool("open_folder", declaration=_decl("open_folder"), kind="simple")
 def _open_folder_tool(args: dict, *, player=None, session_memory=None, **_extra):
-    confirmed = str(args.get("confirmed", "")).lower() in ("yes", "true", "1", "confirm")
-    return open_folder(args.get("path", ""), confirmed=confirmed)
+    return open_folder(args.get("path", ""))
 
 
 @register_tool("send_message", declaration=_decl("send_message"), kind="simple")
 def _send_message_tool(args: dict, *, player=None, session_memory=None, **_extra):
-    return send_message(parameters=args, response=None, player=player, session_memory=session_memory)
+    receiver = (args.get("receiver") or "").strip()
+    text = (args.get("message_text") or "").strip()
+    platform = (args.get("platform") or "whatsapp").strip()
+    if not receiver or not text:
+        return send_message(parameters=args, response=None, player=player, session_memory=session_memory)
+    params = dict(args)
+    return write_guard.request_confirmation(
+        key=f"send_message|{platform.lower()}|{receiver.lower()}|{text}",
+        summary=f"enviar pelo {platform} a {receiver}: '{text[:300]}'",
+        run=lambda: send_message(parameters=params, response=None, player=player, session_memory=session_memory),
+        player=player,
+        audit=("send_message", f"{platform}→{receiver}"),
+    )
 
 
 @register_tool("reminder", declaration=_decl("reminder"), kind="simple")
@@ -227,6 +239,7 @@ async def dispatch_tool(name: str, args: dict, *, loop, jarvis=None, kind: str |
     if kind is not None and spec.kind != kind:
         return None
 
+    args = {k: v for k, v in (args or {}).items() if k != "confirmed"}
     player = getattr(jarvis, "ui", None) if jarvis else None
     speak = getattr(jarvis, "speak", None) if jarvis else None
     session_memory = getattr(jarvis, "session_memory", None) if jarvis else None

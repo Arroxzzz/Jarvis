@@ -19,7 +19,7 @@ PYTHONW_EMBED = PENDRIVE_ROOT / "python-embed" / "pythonw.exe"
 
 # Constantes para derivação e criptografia inline
 _SALT = b"JARVIS-VAULT-v1-PBKDF2"
-_ITERATIONS = 200_000
+_ITERATIONS = 600_000
 
 
 def _derive_key(password: str) -> bytes:

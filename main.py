@@ -78,6 +78,7 @@ from core.llm_client           import call_llm_text, gemini_call_resilient
 from core.async_tool_runner    import run_bounded as _bounded
 from core.async_tool_runner    import run_tool_bound as _run_tool_bound
 from core import context_index
+from core import write_guard
 from core.background_tasks     import BackgroundTaskTracker
 from core.runtime_constants    import (
     TZ_BR as _TZ_BR,
@@ -205,8 +206,20 @@ def _clean_transcript(text: str) -> str:
     return text.strip()
 
 
+def _should_close_wake_gate(was_speaking: bool, server_turn_done: bool) -> bool:
+    """Fecha o gate só na transição de fala para silêncio após o turno do servidor."""
+    return was_speaking and server_turn_done
+
+
+def _watchdog_should_reconnect(awaiting_response: bool, last_activity: float,
+                               now: float, timeout: float = 20.0) -> bool:
+    """Indica se uma resposta pendente excedeu o timeout."""
+    return awaiting_response and (now - last_activity) > timeout
+
+
 from core.tool_declarations import TOOL_DECLARATIONS
 from core.tool_registry import dispatch_tool, get_declarations
+
 
 class JarvisLive:
 
@@ -247,6 +260,7 @@ class JarvisLive:
         self._turn_tools = 0
         self._audio_gaps = 0
         self._last_heard_at = 0.0
+        self._in_first_at = 0.0
         self._heard_late = 0
         self._session_log: list[str] = []          # conversation turns for end-of-session summary
         self._active_tool_tasks: list[asyncio.Task] = []
@@ -256,7 +270,7 @@ class JarvisLive:
         self._resumption_handle: str | None = None   # preserva contexto entre reconexões
         self._pending_cancel_phrase: str | None = None   # frase de cancelamento adiada até o tool_response sair
         self._last_turn_activity: float = time.monotonic()   # watchdog anti-travamento de mic
-        self._watchdog_force_count: int = 0   # disparos consecutivos do watchdog — reset em turno saudável
+        self._awaiting_response: bool = False   # True entre o início da fala/texto do Senhor e a 1ª resposta
         self._tasks = BackgroundTaskTracker()
         self._enhanced_live = True  # affective dialog + proactive audio; auto-disabled if the server rejects them
         self._live_candidates: list[str] = []   # preenchido em _resolve_live_model()
@@ -459,7 +473,10 @@ class JarvisLive:
     def _on_text_command(self, text: str):
         if not self._loop or not self.session:
             return
+        self._gate_decide(write_guard.on_typed(text))
         self._metric_begin_turn("text")
+        self._awaiting_response = True
+        self._last_turn_activity = time.monotonic()
 
         contextual_text = self._maybe_attach_context_hint(text)
         asyncio.run_coroutine_threadsafe(
@@ -481,6 +498,8 @@ class JarvisLive:
     def interrupt(self) -> None:
         """Stop JARVIS mid-speech: cancel running tools (task + cooperative flag), drain audio."""
         self._interrupted = True
+        write_guard.clear_pending()
+        self._awaiting_response = False
         had_active = bool(self._active_tool_tasks) or bool(self._active_cancel_events)
         for t in self._active_tool_tasks:
             if not t.done():
@@ -523,6 +542,37 @@ class JarvisLive:
         short = str(error)[:120]
         self.ui.write_log(f"ERR: {tool_name} — {short}")
         self.speak(f"Sir, {tool_name} encountered an error. {short}")
+
+    def _gate_decide(self, decision) -> None:
+        """Aplica a decisão do portão de confirmação sem bloquear o loop de áudio."""
+        if not decision:
+            return
+        action, p, reason = decision
+        print(f"[Gate] {action} {reason} — {p['summary']}")
+        if action == "confirm":
+            self.ui.write_log(f"SYS: Confirmado — {p['summary']}")
+
+            def _run():
+                if p.get("audit"):
+                    write_guard.log_action(p["audit"][0], p["audit"][1], True)
+                try:
+                    result = p["run"]()
+                except Exception as e:
+                    result = f"falhou: {e}"
+                self.ui.write_log(f"SYS: {str(result)[:120]}")
+                if not p.get("silent_result"):
+                    self.speak(
+                        "[ACAO_EXECUTADA — fale agora, em uma frase, sem ler etiquetas] "
+                        f"Ação: {p['summary']}. Resultado: {result}"
+                    )
+
+            threading.Thread(target=_run, daemon=True, name="confirmed-action").start()
+        elif action == "retry":
+            self.speak("[CONFIRMACAO — fale agora] Não captei o 'confirmo'. "
+                       "Peça ao Senhor, em uma frase, que diga 'confirmo' ou 'cancela'.")
+        elif action == "cancel" and reason != "negacao":
+            self.speak("[CONFIRMACAO_CANCELADA — fale agora, em uma frase] "
+                       "O pedido expirou ou não foi confirmado; nada foi executado.")
 
     def _build_config(self) -> types.LiveConnectConfig:
         # Load customization from config
@@ -788,23 +838,28 @@ class JarvisLive:
             )
 
         if name == "shutdown_jarvis":
-            self.ui.write_log("SYS: Shutdown requested.")
+            def _run_shutdown() -> str:
+                async def _do_shutdown():
+                    await self._save_session_summary()
+                    try:
+                        await self._safe_send_content([{"text": "Say a brief natural goodbye to the user."}])
+                    except Exception:
+                        pass
+                    await asyncio.sleep(1.5)
+                    import os as _os
+                    _os._exit(0)
+                asyncio.run_coroutine_threadsafe(_do_shutdown(), self._loop)
+                return "Encerrando."
 
-            async def _do_shutdown():
-                await self._save_session_summary()
-                try:
-                    await self._safe_send_content([{"text": "Say a brief natural goodbye to the user."}])
-                except Exception:
-                    pass
-                await asyncio.sleep(1.5)
-                import os as _os
-                _os._exit(0)
-
-            asyncio.create_task(_do_shutdown())
-            return types.FunctionResponse(
-                id=fc.id, name=name,
-                response={"result": "Shutting down, Senhor."}
+            result = write_guard.request_confirmation(
+                key="shutdown_jarvis",
+                summary="desligar o J.A.R.V.I.S. por completo (encerra o programa)",
+                run=_run_shutdown,
+                player=self.ui,
+                audit=("shutdown_jarvis", "assistant"),
+                silent_result=True,
             )
+            return types.FunctionResponse(id=fc.id, name=name, response={"result": result})
 
         if name == "sync_memory":
             self.ui.write_log("SYS: Sincronizando com a nuvem...")
@@ -1019,6 +1074,10 @@ class JarvisLive:
                             if txt:
                                 if not self._metric_turn_started:
                                     self._metric_begin_turn("voice")
+                                if not in_buf:
+                                    self._in_first_at = time.monotonic()
+                                    self._awaiting_response = True
+                                    self._last_turn_activity = self._in_first_at
                                 in_buf.append(txt)
                                 self._last_user_speech = time.monotonic()
                                 self._last_heard_at = self._last_user_speech
@@ -1027,7 +1086,7 @@ class JarvisLive:
 
                         if sc.turn_complete:
                             self._last_turn_activity = time.monotonic()
-                            self._watchdog_force_count = 0
+                            self._awaiting_response = False
                             self._server_turn_done = True
                             if self._metric_turn_started:
                                 self._metric(
@@ -1065,6 +1124,8 @@ class JarvisLive:
                                 self.ui.write_log(f"You: {full_in}")
                                 self._session_log.append(f"User: {full_in}")
                             in_buf = []
+                            _utter_at, self._in_first_at = self._in_first_at, 0.0
+                            self._gate_decide(write_guard.on_turn_complete(full_in, _utter_at or None))
 
                             full_out = " ".join(out_buf).strip()
                             if full_out:
@@ -1193,10 +1254,11 @@ class JarvisLive:
                         self._metric("audio_queue", **snap)
                         self._audio_queue_last_metric = time.monotonic()
                     if self.audio_in_queue.empty():
-                        if self._is_speaking:
+                        was_speaking = self._is_speaking
+                        if was_speaking:
                             self._audio_gaps += 1
                         self.set_speaking(False)
-                        if self._server_turn_done:
+                        if _should_close_wake_gate(was_speaking, self._server_turn_done):
                             self._wake_gate.close_gate()
                     continue
 
@@ -1420,16 +1482,8 @@ class JarvisLive:
     # ── System monitor ──────────────────────────────────────────────────────────
 
     async def _turn_watchdog(self) -> None:
-        """Evita 'surdez' permanente do microfone: se turn_done_event ficar
-        preso (sem turn_complete/áudio) por >15s, força reset do gate de
-        áudio de entrada — protege contra hang do modelo Live.
-        Se o travamento se repetir 5x seguidas (~75s), assume degradação
-        real do backend (cota/alta demanda) e força RECONEXÃO COMPLETA da
-        sessão — resetar o mesmo turno preso indefinidamente não resolve
-        um backend saturado, só mascara o sintoma.
-        CONGELADO enquanto houver tool síncrona ativa (_active_tool_tasks)
-        ou tool assíncrona em background — a ausência
-        de áudio nesse intervalo é esperada, não um travamento real."""
+        """Reconecta após uma solicitação sem resposta, fora de tools ativas/background."""
+        RESPONSE_TIMEOUT = 20.0
         while True:
             await asyncio.sleep(5)
             bg_tasks_pending = self._tasks.pending_count()
@@ -1450,24 +1504,15 @@ class JarvisLive:
                 self._vision_started_at = 0.0
                 self._vision_close_pending = False
                 raise RuntimeError("Watchdog: vision response timeout")
-            if self._turn_done_event and not self._turn_done_event.is_set():
-                if time.monotonic() - self._last_turn_activity > 15:
-                    self._watchdog_force_count += 1
-                    print(f"[JARVIS] ⚠️ Turn travado >15s — forçando reset "
-                          f"({self._watchdog_force_count}/5)")
-                    self.ui.write_log(
-                        "SYS: ⚠️ Resposta lenta — possível limite de cota da API "
-                        f"({self._watchdog_force_count}/5)."
-                    )
-                    self._turn_done_event.set()
-                    self._last_turn_activity = time.monotonic()
-                    if self._watchdog_force_count >= 5:
-                        self.ui.write_log("SYS: ⚠️ Travamento persistente — reconectando sessão.")
-                        self._watchdog_force_count = 0
-                        raise RuntimeError(
-                            "Watchdog: turno travado repetidamente — "
-                            "possível limite de cota, forçando reconexão."
-                        )
+            now = time.monotonic()
+            if _watchdog_should_reconnect(
+                self._awaiting_response, self._last_turn_activity, now, RESPONSE_TIMEOUT
+            ):
+                self.ui.write_log(
+                    f"SYS: ⚠️ Sem resposta do modelo há {RESPONSE_TIMEOUT:.0f}s — reconectando."
+                )
+                self._awaiting_response = False
+                raise RuntimeError("Watchdog: sem resposta do modelo — reconectando.")
     async def _run_system_monitor(self) -> None:
         """Background task: voice alerts when metrics exceed thresholds."""
         while True:
@@ -1650,6 +1695,7 @@ class JarvisLive:
 
     def _prepare_session_state(self) -> None:
         """Reseta o estado de sessão vivo para manter run() organizado e consistente."""
+        write_guard.clear_pending()
         self.audio_in_queue = asyncio.Queue(maxsize=200)
         self.out_queue = asyncio.Queue(maxsize=80)
         self._turn_done_event = asyncio.Event()
@@ -1665,6 +1711,7 @@ class JarvisLive:
         self._interrupted = False
         self._server_turn_done = True
         self._last_turn_activity = time.monotonic()
+        self._awaiting_response = False
 
     def _create_live_client(self) -> genai.Client:
         """Centraliza a criação do client Gemini para o loop de sessão."""
@@ -1688,16 +1735,6 @@ class JarvisLive:
             self.ui.set_mic_mode(False)
 
         await self._resolve_live_model()
-
-        try:
-            from core.context_resolver import _default_roots
-            self._tasks.spawn(
-                lambda: context_index.rebuild_index(_default_roots()),
-                asyncio.get_event_loop(),
-                task_name="context_index_boot",
-            )
-        except Exception as e:
-            print(f"[ContextIndex] ⚠️ Bootstrap index failed: {e}")
 
     def _flatten_err_text(self, exc: BaseException) -> str:
         """Converte ExceptionGroup em texto plano para diagnóstico de reconexão."""

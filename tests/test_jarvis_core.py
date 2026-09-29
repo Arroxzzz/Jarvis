@@ -22,6 +22,19 @@ from core.crypto_vault import (
 )
 
 
+@pytest.fixture(autouse=True)
+def reset_confirmation_gate(tmp_path, monkeypatch):
+    from core import write_guard
+
+    base = tmp_path / "base"
+    monkeypatch.setattr(write_guard, "get_base_dir", lambda: base)
+    write_guard._pending = None
+    write_guard._last_done = None
+    yield
+    write_guard._pending = None
+    write_guard._last_done = None
+
+
 def test_encrypt_decrypt_bytes_roundtrip():
     data = b"JARVIS test payload \x00\xFF"
     enc = encrypt_bytes(data, "senha_teste")
@@ -403,8 +416,13 @@ def test_invalid_note_name():
         kv_module.write_note("../../etc/passwd", "exploit")
 
 
-def test_obsidian_vault_is_configured():
-    assert kv_module.OBSIDIAN_VAULT == Path(r"D:\Memoria_Jarvis")
+def test_resolve_vault_dir_uses_config_when_set():
+    cfg = {"vault_path": r"D:\Memoria_Jarvis"}
+    assert kv_module._resolve_vault_dir(cfg, Path("/qualquer")) == Path(r"D:\Memoria_Jarvis")
+
+
+def test_resolve_vault_dir_falls_back_when_unset():
+    assert kv_module._resolve_vault_dir({}, Path("/home/paulo")) == Path("/home/paulo/JarvisVault")
 
 
 from core.sync_manager import _obfuscate_key, _resolve_password
@@ -801,17 +819,35 @@ def test_audio_queue_snapshot_reports_backlog_and_underrun():
     assert data["underrun"] in (0, 1)
 
 
-def test_file_delete_requires_explicit_confirmation(tmp_path):
-    from actions.file_controller import file_controller
+def test_file_delete_requires_explicit_confirmation(tmp_path, monkeypatch):
+    import actions.file_controller as file_controller_module
+    from core import write_guard
 
     target = tmp_path / "delete_me.txt"
     target.write_text("x", encoding="utf-8")
+    monkeypatch.setattr(
+        file_controller_module,
+        "_safe_trash",
+        lambda path: (path.unlink(), f"Moved to Trash: {path.name}")[1],
+    )
 
-    result = file_controller({"action": "delete", "path": str(tmp_path), "name": "delete_me.txt"})
-    assert "confirm" in result.lower()
+    result = file_controller_module.file_controller(
+        {"action": "delete", "path": str(tmp_path), "name": "delete_me.txt"}
+    )
+    assert "[AGUARDANDO_CONFIRMACAO]" in result
+    assert target.exists()
 
-    confirm = file_controller({"action": "delete", "path": str(tmp_path), "name": "delete_me.txt", "confirmed": "yes"})
-    assert "delete" in confirm.lower() or "removed" in confirm.lower() or "trash" in confirm.lower()
+    confirm = file_controller_module.file_controller(
+        {"action": "delete", "path": str(tmp_path), "name": "delete_me.txt", "confirmed": "yes"}
+    )
+    assert "[AGUARDANDO_CONFIRMACAO]" in confirm
+    assert target.exists()
+
+    assert write_guard.on_turn_complete("", None) is None
+    decision = write_guard.on_turn_complete("Confirmo.", time.monotonic())
+    assert decision[0] == "confirm"
+    decision[1]["run"]()
+    assert not target.exists()
 
 
 def test_file_actions_use_human_friendly_names(tmp_path):
@@ -1183,3 +1219,318 @@ def test_dev_agent_mentor_mode_proposes_patch_without_applying_it():
     assert "Mentoria guiada" in result
     assert "Patch sugerido" in result
     assert "nenhuma alteração foi aplicada" in result.lower()
+
+
+def test_write_guard_confirms_once_after_arming():
+    from core import write_guard
+
+    calls = []
+    result = write_guard.request_confirmation("send", "enviar mensagem", lambda: calls.append("run") or "ok")
+    assert "[AGUARDANDO_CONFIRMACAO]" in result
+    assert calls == []
+
+    assert write_guard.on_turn_complete("manda pro joao: confirmo presenca", time.monotonic()) is None
+    assert calls == []
+    decision = write_guard.on_turn_complete("Confirmo.", time.monotonic())
+    assert decision[0] == "confirm"
+    assert calls == []
+    assert decision[1]["run"]() == "ok"
+    assert calls == ["run"]
+    assert write_guard.on_turn_complete("confirmo", time.monotonic()) is None
+
+
+def test_write_guard_cancels_negation():
+    from core import write_guard
+
+    for index, utterance in enumerate(("não confirmo", "cancela")):
+        write_guard.request_confirmation(f"cancel-{index}", "ação", lambda: "executada")
+        assert write_guard.on_turn_complete("pedido original", time.monotonic()) is None
+        decision = write_guard.on_turn_complete(utterance, time.monotonic())
+        assert decision[0] == "cancel"
+        assert decision[2] == "negacao"
+
+
+def test_write_guard_tolerates_one_unrecognized_utterance():
+    from core import write_guard
+
+    write_guard.request_confirmation("retry", "ação", lambda: "executada")
+    assert write_guard.on_turn_complete("pedido original", time.monotonic()) is None
+    utterance = "eu confirmo que a reunião foi remarcada para amanhã"
+    assert write_guard.on_turn_complete(utterance, time.monotonic())[0] == "retry"
+    decision = write_guard.on_turn_complete(utterance, time.monotonic())
+    assert decision[0] == "cancel"
+    assert decision[2] == "nao_entendi"
+
+
+def test_write_guard_expires_and_ignores_pre_arming_speech():
+    from core import write_guard
+
+    write_guard.request_confirmation("expired", "ação", lambda: "executada")
+    assert write_guard.on_turn_complete("pedido original", time.monotonic()) is None
+    decision = write_guard.on_turn_complete("confirmo", time.monotonic() + 100)
+    assert decision[0] == "cancel"
+    assert decision[2] == "expirou"
+
+    write_guard.request_confirmation("old-speech", "ação", lambda: "executada")
+    assert write_guard.on_turn_complete("pedido original", time.monotonic()) is None
+    armed_at = write_guard._pending["armed_at"]
+    assert write_guard.on_turn_complete("confirmo", armed_at - 1) is None
+    assert write_guard.on_turn_complete("confirmo", time.monotonic())[0] == "confirm"
+
+
+def test_write_guard_deduplicates_and_cools_down_completed_actions():
+    from core import write_guard
+
+    first = write_guard.request_confirmation("same", "ação", lambda: "executada")
+    duplicate = write_guard.request_confirmation("same", "ação", lambda: "executada")
+    assert "[AGUARDANDO_CONFIRMACAO]" in first
+    assert "já está aguardando" in duplicate
+    write_guard.request_confirmation("replacement", "nova ação", lambda: "executada")
+    assert write_guard._pending["key"] == "replacement"
+    assert write_guard.on_turn_complete("pedido original", time.monotonic()) is None
+    decision = write_guard.on_turn_complete("confirmo", time.monotonic())
+    assert decision[1]["key"] == "replacement"
+    assert "[JA_EXECUTADO]" in write_guard.request_confirmation(
+        "replacement", "nova ação", lambda: "executada"
+    )
+
+
+def test_write_guard_accepts_typed_confirmation_only_after_arming():
+    from core import write_guard
+
+    write_guard.request_confirmation("typed", "ação", lambda: "executada")
+    assert write_guard.on_typed("confirmo") is None
+    assert write_guard.on_turn_complete("pedido original", time.monotonic()) is None
+    assert write_guard.on_typed("confirmo")[0] == "confirm"
+    write_guard.clear_pending()
+    assert write_guard.on_typed("confirmo") is None
+
+
+def test_dispatch_tool_ignores_model_confirmed_flag(tmp_path):
+    from core import tool_registry, write_guard
+
+    target = tmp_path / "x.txt"
+    target.write_text("x", encoding="utf-8")
+
+    async def dispatch():
+        return await tool_registry.dispatch_tool(
+            "file_controller",
+            {"action": "delete", "path": str(tmp_path), "name": "x.txt", "confirmed": "yes"},
+            loop=asyncio.get_running_loop(),
+            kind="simple",
+        )
+
+    result = asyncio.run(dispatch())
+    assert "AGUARDANDO_CONFIRMACAO" in result
+    assert target.exists()
+
+
+def test_send_message_requires_code_confirm(monkeypatch):
+    from core import tool_registry, write_guard
+
+    calls = []
+    monkeypatch.setattr(
+        tool_registry,
+        "send_message",
+        lambda **kwargs: calls.append(kwargs) or "sent",
+    )
+    args = {"receiver": "João", "message_text": "oi", "platform": "whatsapp"}
+    result = tool_registry._send_message_tool(args)
+    assert "AGUARDANDO_CONFIRMACAO" in result
+    assert calls == []
+
+    assert write_guard.on_turn_complete("pedido original", time.monotonic()) is None
+    decision = write_guard.on_turn_complete("confirmo", time.monotonic())
+    assert decision[1]["run"]() == "sent"
+    assert len(calls) == 1
+    assert calls[0]["parameters"] == args
+
+    result = tool_registry._send_message_tool({"message_text": "oi"})
+    assert result == "sent"
+    assert len(calls) == 2
+
+
+def test_computer_settings_restart_requires_code_confirm(monkeypatch):
+    from actions import computer_settings
+    from core import write_guard
+
+    calls = []
+    monkeypatch.setattr(computer_settings, "_PYAUTOGUI", True)
+    monkeypatch.setitem(computer_settings.ACTION_MAP, "shutdown", lambda: calls.append("shutdown"))
+
+    result = computer_settings.computer_settings({"action": "shutdown", "confirmed": "yes"})
+    assert "AGUARDANDO_CONFIRMACAO" in result
+    assert calls == []
+
+    assert write_guard.on_turn_complete("pedido original", time.monotonic()) is None
+    decision = write_guard.on_turn_complete("confirmo", time.monotonic())
+    assert decision[1]["run"]() == "Done: shutdown."
+    assert calls == ["shutdown"]
+
+
+def test_main_gate_decision_executes_and_announces():
+    import threading
+    from main import JarvisLive
+
+    class DummyUI:
+        def __init__(self):
+            self.logs = []
+
+        def write_log(self, text):
+            self.logs.append(text)
+
+    live = object.__new__(JarvisLive)
+    live.ui = DummyUI()
+    spoken = []
+    announced = threading.Event()
+
+    def speak(text):
+        spoken.append(text)
+        if text.startswith("[ACAO_EXECUTADA"):
+            announced.set()
+
+    live.speak = speak
+    decision = (
+        "confirm",
+        {"summary": "ação", "audit": None, "run": lambda: "ok"},
+        "",
+    )
+    live._gate_decide(decision)
+    assert announced.wait(2)
+    assert any(text.startswith("SYS: Confirmado") for text in live.ui.logs)
+
+    live._gate_decide(("retry", {"summary": "ação"}, ""))
+    assert any(text.startswith("[CONFIRMACAO") for text in spoken)
+    live._gate_decide(("cancel", {"summary": "ação"}, "expirou"))
+    assert any(text.startswith("[CONFIRMACAO_CANCELADA") for text in spoken)
+    before = len(spoken)
+    live._gate_decide(("cancel", {"summary": "ação"}, "negacao"))
+    assert len(spoken) == before
+    live._gate_decide(None)
+    assert len(spoken) == before
+
+
+def test_write_guard_records_silent_result_default_and_opt_in():
+    from core import write_guard
+
+    write_guard.request_confirmation("silent", "ação", lambda: "ok", silent_result=True)
+    assert write_guard.on_turn_complete("pedido original", time.monotonic()) is None
+    decision = write_guard.on_turn_complete("confirmo", time.monotonic())
+    assert decision[1]["silent_result"] is True
+
+    write_guard.request_confirmation("normal", "outra ação", lambda: "ok")
+    assert write_guard.on_turn_complete("pedido original", time.monotonic()) is None
+    decision = write_guard.on_turn_complete("confirmo", time.monotonic())
+    assert decision[1]["silent_result"] is False
+
+
+def test_main_gate_respects_silent_result(monkeypatch):
+    import main
+    from main import JarvisLive
+
+    class ImmediateThread:
+        def __init__(self, *, target, **_kwargs):
+            self.target = target
+
+        def start(self):
+            self.target()
+
+    class DummyUI:
+        def __init__(self):
+            self.logs = []
+
+        def write_log(self, text):
+            self.logs.append(text)
+
+    monkeypatch.setattr(main.threading, "Thread", ImmediateThread)
+    live = object.__new__(JarvisLive)
+    live.ui = DummyUI()
+    spoken = []
+    live.speak = spoken.append
+
+    live._gate_decide((
+        "confirm",
+        {"summary": "encerrar", "audit": None, "run": lambda: "ok", "silent_result": True},
+        "",
+    ))
+    assert spoken == []
+    assert "SYS: ok" in live.ui.logs
+
+    live._gate_decide((
+        "confirm",
+        {"summary": "ação", "audit": None, "run": lambda: "ok", "silent_result": False},
+        "",
+    ))
+    assert len(spoken) == 1
+    assert spoken[0].startswith("[ACAO_EXECUTADA")
+
+
+def test_shutdown_jarvis_requires_confirmation_before_scheduling_shutdown():
+    from main import JarvisLive
+
+    class DummyUI:
+        muted = True
+
+        def set_state(self, *_args, **_kwargs):
+            return None
+
+        def write_log(self, *_args, **_kwargs):
+            return None
+
+        def show_content(self, *_args, **_kwargs):
+            return None
+
+    live = object.__new__(JarvisLive)
+    live.ui = DummyUI()
+    live._loop = None
+
+    class DummyFC:
+        id = "shutdown-test"
+        name = "shutdown_jarvis"
+        args = {}
+
+    response = asyncio.run(live._execute_tool_impl(DummyFC()))
+    assert "AGUARDANDO_CONFIRMACAO" in response.response["result"]
+
+
+def test_should_close_wake_gate_only_when_speech_ends_after_server_turn():
+    from main import _should_close_wake_gate
+
+    assert _should_close_wake_gate(False, False) is False
+    assert _should_close_wake_gate(False, True) is False
+    assert _should_close_wake_gate(True, False) is False
+    assert _should_close_wake_gate(True, True) is True
+
+
+def test_watchdog_should_reconnect_only_after_response_timeout():
+    from main import _watchdog_should_reconnect
+
+    now = time.monotonic()
+    assert _watchdog_should_reconnect(True, now - 25, now, timeout=20) is True
+    assert _watchdog_should_reconnect(True, now - 10, now, timeout=20) is False
+    assert _watchdog_should_reconnect(False, now - 100, now) is False
+    assert _watchdog_should_reconnect(True, now - 21, now, timeout=30) is False
+
+
+def test_wake_word_enabled_is_opt_in(monkeypatch):
+    import config
+    from core.wake_word_gate import _wake_word_enabled
+
+    monkeypatch.setattr(config, "get_config", lambda: {})
+    assert _wake_word_enabled() is False
+    monkeypatch.setattr(config, "get_config", lambda: {"wake_word_enabled": True})
+    assert _wake_word_enabled() is True
+    monkeypatch.setattr(config, "get_config", lambda: {"wake_word_enabled": False})
+    assert _wake_word_enabled() is False
+
+
+def test_wake_word_gate_disabled_forwards_audio(monkeypatch):
+    import config
+    from core.wake_word_gate import WakeWordGate
+
+    monkeypatch.setattr(config, "get_config", lambda: {})
+    gate = WakeWordGate()
+    chunk = b"\x00" * 100
+    assert gate._available is False
+    assert gate.feed(chunk) == chunk
+    gate.close_gate()

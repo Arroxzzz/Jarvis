@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Iterable
 
 from core import context_index
+from core.paths import get_home_dir
 
 
 def _normalize_text(value: str) -> str:
@@ -39,7 +40,7 @@ def _describe_path_location(path_value: str | os.PathLike[str] | None) -> str:
 
 
 def _default_roots() -> list[Path]:
-    home = Path.home()
+    home = get_home_dir()
     return [
         home / "Desktop",
         home / "Downloads",

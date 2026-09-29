@@ -156,6 +156,10 @@ A linha de produto atual está pronta para uso seguro e validado. O próximo ava
 - [x] Fase 1: remoção de actions/coulson_listener.py, tools/encrypt_notification.py e plugins/upload_video.py
 - [x] Fase 2: max_tokens por tipo, vazio/length = falha, .bak antes de sobrescrever, web_search com DDG primeiro, flight_finder resiliente e sem tfs
 - [x] Fase 2B: hotfix (diagnóstico e esforço de raciocínio, breaker por modelo, dev_agent topológico/retry/abort/allowlist, web_search cru sem modo price, resolução de arquivo)
-- [ ] Fase 3: gate de confirmação por voz ("confirmo") para send_message, delete, restart, shutdown
-- [ ] Fase 4: watchdog "aguardando resposta" + correção do close_gate do wake word
-- [ ] Fase 5: higiene (cofre 600k iterações, vault configurável, get_home_dir, reindex duplicado, código morto, DESTRUCTIVE_ACTIONS)
+- [x] Fase 3: gate de confirmação por voz ("confirmo") para send_message, delete, restart, shutdown
+- [x] Fase 4: watchdog "aguardando resposta" (_awaiting_response) e correção do close_gate do wake word
+- [x] Fase 4B: wake word desligado por padrão (opt-in via "wake_word_enabled": true em config/api_keys.json) — o modelo hey_jarvis (treinado em inglês) não detectou "Jarvis" com fonética PT-BR em teste real, e o close_gate corrigido na Fase 4 passou a exigi-lo de verdade, deixando o sistema surdo. Calibração fica pendente para quando o Senhor quiser reativar.
+- [x] Fase 5: cofre 600k iterações (crypto_vault.py + boot_stage0.py, requer recifrar api_keys.enc/project.enc manualmente), vault Obsidian configurável via "vault_path" (antes fixo em D:\Memoria_Jarvis), get_home_dir() em code_helper/flight_finder/context_resolver, reindex duplicado removido do boot, DESTRUCTIVE_ACTIONS morta removida, gate de confirmação por voz estendido a shutdown_jarvis, código morto removido de web_search.py
+
+## PRÓXIMO ITEM IMEDIATO APÓS A FASE 7 (prioridade sobre qualquer coisa nova)
+- [ ] Calibrar/treinar a detecção de wake word para "Jarvis" com a pronúncia PT-BR do Senhor Paulo (o modelo hey_jarvis padrão é treinado em inglês — ver Fase 4B em core/wake_word_gate.py). Só depois disso religar "wake_word_enabled": true em config/api_keys.json. O Senhor pediu para isso ser feito IMEDIATAMENTE após a Fase 7, antes de qualquer novo escopo.

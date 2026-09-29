@@ -11,7 +11,7 @@ import zipfile
 from pathlib import Path
 
 _SALT = b'JARVIS-VAULT-v1-PBKDF2'
-_ITERATIONS = 200_000
+_ITERATIONS = 600_000
 
 def _derive_key(password: str) -> bytes:
     from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
