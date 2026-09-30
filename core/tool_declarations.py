@@ -278,9 +278,10 @@ TOOL_DECLARATIONS = [
         "description": (
             "Builds complete multi-file projects from scratch: plans, writes files, installs deps, "
             "opens VSCode, runs and fixes errors. RUNS IN THE BACKGROUND and returns immediately with "
-            "[TAREFA_INICIADA] — announce that it started in one sentence and do NOT call it again "
-            "for the same request. The final result arrives later as a [BUILD_CONCLUIDO] message. "
-            "Use background_status to check progress and cancel_background_task to stop it."
+            "[TAREFA_INICIADA]: do NOT speak before calling it; after it returns, say at most 4 words "
+            "(e.g. 'Em andamento, Senhor.') and do NOT call it again for the same request. The final "
+            "result arrives later as [BUILD_CONCLUIDO]. Use background_status to check progress and "
+            "cancel_background_task to stop it."
         ),
         "parameters": {
             "type": "OBJECT",
@@ -309,6 +310,19 @@ TOOL_DECLARATIONS = [
             "to actually stop. Does not affect the assistant's speech or the microphone."
         ),
         "parameters": {"type": "OBJECT", "properties": {}},
+    },
+    {
+        "name": "proactive_mode",
+        "description": (
+            "Turns the assistant's spontaneous, rule-based warnings on or off, or reports their state. "
+            "Use when the user says to enable/activate/disable/deactivate proactivity, or asks whether "
+            "it is on. Off by default. Answer with one short sentence."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {"state": {"type": "STRING", "description": "on | off | status"}},
+            "required": ["state"],
+        },
     },
     {
         "name": "computer_control",

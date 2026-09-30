@@ -54,3 +54,56 @@ def get_monitor_position(monitor_name: str = "secondary") -> tuple[int, int]:
     except Exception:
         pass
     return 1920, 0
+
+
+import re
+
+_ABS_PATH = re.compile(
+    r'(?<![A-Za-z0-9/])[A-Za-z]:[\\/](?:[^\\/:*?"<>|\s]+[\\/])*[^\\/:*?"<>|\s]*'
+)
+
+
+def _norm(p) -> str:
+    return str(p).replace("\\", "/").rstrip("/").lower()
+
+
+def _speech_roots() -> list[tuple[str, str]]:
+    """(raiz normalizada, rótulo falado), da mais específica para a mais genérica."""
+    home = get_home_dir()
+    roots = [
+        (home / "Desktop" / "JarvisProjects", "na sua pasta de projetos"),
+        (home / "Desktop", "na sua área de trabalho"),
+        (home / "Downloads", "nos seus downloads"),
+        (home / "Documents", "nos seus documentos"),
+    ]
+    try:
+        from core.knowledge_vault import OBSIDIAN_VAULT
+        roots.insert(0, (OBSIDIAN_VAULT, "no seu vault"))
+    except Exception:
+        pass
+    roots.append((home, "na sua pasta pessoal"))
+    return [(_norm(p), label) for p, label in roots]
+
+
+def humanize_for_speech(text: str) -> str:
+    """Troca caminhos absolutos por 'nome (local em linguagem natural)'."""
+    if not text or ":" not in text:
+        return text
+    roots = _speech_roots()
+
+    def _repl(m: re.Match) -> str:
+        raw = m.group(0)
+        core = raw.rstrip(".,;:)")
+        tail = raw[len(core):]
+        n = _norm(core)
+        name = core.replace("\\", "/").rstrip("/").rsplit("/", 1)[-1]
+        if not name or name.endswith(":"):
+            name = "um local no computador"
+        for root, label in roots:
+            if n == root:
+                return label + tail
+            if n.startswith(root + "/"):
+                return f"{name} ({label})" + tail
+        return name + tail
+
+    return _ABS_PATH.sub(_repl, text)

@@ -1400,6 +1400,15 @@ class PluginManagerOverlay(QWidget):
         self._style_toggle(btn, new_val)
 
 
+def _split_log(text: str) -> tuple[str, str]:
+    """'SYS: msg' → ('SYS', 'msg'). Só trata prefixos curtos como nomes de emissor."""
+    head, sep, tail = text.partition(":")
+    head = head.strip()
+    if sep and tail.strip() and 0 < len(head) <= 20 and not any(c in head for c in "[]()"):
+        return head, tail.strip()
+    return "SISTEMA", text.strip()
+
+
 class MainWindow(QMainWindow):
     _log_sig        = pyqtSignal(str)
     _state_sig      = pyqtSignal(str)
@@ -2790,9 +2799,7 @@ class MainWindow(QMainWindow):
         if not self._web_ready:
             self._pending_logs.append(text)
             return
-        name, _, msg = text.partition(":")
-        name = name.strip() or "SISTEMA"
-        msg = msg.strip() or text
+        name, msg = _split_log(text)
         safe_name = json.dumps(name)
         safe_msg = json.dumps(msg)
         self.webview.page().runJavaScript(

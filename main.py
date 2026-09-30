@@ -79,6 +79,8 @@ from core.async_tool_runner    import run_bounded as _bounded
 from core.async_tool_runner    import run_tool_bound as _run_tool_bound
 from core import context_index
 from core import write_guard
+from core.hw_sensors import get_idle_seconds, is_foreground_fullscreen
+from core.paths import humanize_for_speech
 from core.background_tasks     import BackgroundTaskTracker
 from core.runtime_constants    import (
     TZ_BR as _TZ_BR,
@@ -200,10 +202,14 @@ def _validate_gemini_key(api_key: str) -> bool:
         return True  # erro não relacionado à chave — não bloquear
 
 
-def _clean_transcript(text: str) -> str:    
-    text = _CTRL_RE.sub("", text) 
-    text = re.sub(r"[\x00-\x08\x0b-\x1f]", "", text)
-    return text.strip()
+def _clean_transcript(text: str) -> str:
+    text = _CTRL_RE.sub("", text)
+    return re.sub(r"[\x00-\x08\x0b-\x1f]", "", text)
+
+
+def _join_transcript(parts: list[str]) -> str:
+    """Concatena fragmentos de transcrição sem inserir espaços entre palavras."""
+    return " ".join("".join(parts).split())
 
 
 def _should_close_wake_gate(was_speaking: bool, server_turn_done: bool) -> bool:
@@ -249,7 +255,7 @@ class JarvisLive:
         self._turn_done_event: asyncio.Event | None = None
         self._briefing_sent    = False          # morning briefing fires once per process
         self._sys_monitor      = SystemMonitor()  # persistent cooldown state
-        self._proactive        = ProactiveEngine()
+        self._proactive = ProactiveEngine(enabled=bool(_read_config().get("proactive_enabled", False)))
         self._last_user_speech = time.monotonic()  # updated on every user utterance
         self._metric_turn_id = 0
         self._metric_turn_started = 0.0
@@ -535,7 +541,7 @@ class JarvisLive:
         if not self._loop or not self.session:
             return
         asyncio.run_coroutine_threadsafe(
-            self._safe_send_content([{"text": text}]),
+            self._safe_send_content([{"text": humanize_for_speech(text)}]),
             self._loop
         )
 
@@ -1027,6 +1033,7 @@ class JarvisLive:
     async def _receive_audio(self):
         print("[JARVIS] 👂 Recv started")
         out_buf, in_buf = [], []
+        dbg = []   # [DIAG] remover após diagnóstico
 
         try:
             while True:
@@ -1070,11 +1077,13 @@ class JarvisLive:
                         sc = response.server_content
 
                         if sc.output_transcription and sc.output_transcription.text:
+                            dbg.append(("out", sc.output_transcription.text, getattr(sc.output_transcription, "finished", None)))
                             txt = _clean_transcript(sc.output_transcription.text)
                             if txt and txt != (out_buf[-1] if out_buf else ""):
                                 out_buf.append(txt)
 
                         if sc.input_transcription and sc.input_transcription.text:
+                            dbg.append(("in", sc.input_transcription.text, getattr(sc.input_transcription, "finished", None)))
                             txt = _clean_transcript(sc.input_transcription.text)
                             if txt:
                                 if not self._metric_turn_started:
@@ -1109,13 +1118,14 @@ class JarvisLive:
                                 model=self._current_live_model(),
                                 interrupted=self._interrupted,
                                 heard_late=self._heard_late,
-                                heard=repr(" ".join(in_buf)[:60]),
+                                heard=repr(_join_transcript(in_buf)[:60]),
                             )
                             self._turn_audio = self._turn_tools = self._audio_gaps = 0
                             self._heard_late = 0
                             if self._turn_done_event:
                                 self._turn_done_event.set()
 
+                            print(f"[Transcript] {dbg!r}"); dbg.clear()   # [DIAG]
                             # If this turn_complete ends an interrupted response, clear the
                             # flag and skip all further processing for that turn.
                             if self._interrupted:
@@ -1124,7 +1134,7 @@ class JarvisLive:
                                 out_buf = []
                                 continue
 
-                            full_in = " ".join(in_buf).strip()
+                            full_in = _join_transcript(in_buf)
                             if full_in:
                                 self.ui.write_log(f"You: {full_in}")
                                 self._session_log.append(f"User: {full_in}")
@@ -1132,7 +1142,7 @@ class JarvisLive:
                             _utter_at, self._in_first_at = self._in_first_at, 0.0
                             self._gate_decide(write_guard.on_turn_complete(full_in, _utter_at or None))
 
-                            full_out = " ".join(out_buf).strip()
+                            full_out = _join_transcript(out_buf)
                             if full_out:
                                 self.ui.write_log(f"{self._asst_name}: {full_out}")
                                 self._session_log.append(f"{self._asst_name}: {full_out}")
@@ -1426,11 +1436,12 @@ class JarvisLive:
         asyncio.create_task(_deliver_news())
 
     async def _send_boot_greeting(self) -> None:
-        """Saudação proativa leve no boot — independente da briefing de notícias (opt-in)."""
+        """Saudação mínima no boot. Sempre em 1ª pessoa e SEM citar o próprio nome."""
         await asyncio.sleep(0.3)
         if not self.session:
             return
         last = await asyncio.to_thread(pop_last_session)
+        style = "Em PT-BR, em primeira pessoa, SEM dizer o seu próprio nome e sem a palavra 'online'."
         if last:
             try:
                 delta = (datetime.now(_TZ_BR).date() - datetime.strptime(last["date"], "%Y-%m-%d").date()).days
@@ -1438,18 +1449,19 @@ class JarvisLive:
             except Exception:
                 when = "da última vez"
             prompt = (
-                f"Cumprimente o usuário calorosamente e mencione naturalmente que {when}: "
-                f"{last['summary']} Fale primeiro, sem esperar o usuário responder. "
-                f"Máximo 2 frases curtas. Responda em PT-BR."
+                f"{style} Faça uma saudação de até 4 palavras (ex.: 'Às ordens, Senhor.') e, em seguida, "
+                f"uma frase curta lembrando que {when}: {last['summary']} Máximo 25 palavras no total."
             )
         elif __import__("os").environ.get("JARVIS_NEW_ENVIRONMENT") == "1":
             prompt = (
-                "Cumprimente o usuário notando que vocês estão em um ambiente "
-                "diferente do habitual (máquina diferente). Pergunte como deve "
-                "chamar esse ambiente/local, em 1-2 frases curtas, PT-BR."
+                f"{style} Note em uma frase que estamos em um ambiente diferente do habitual (outra máquina) "
+                "e pergunte como o Senhor quer chamar este local. Máximo 2 frases curtas."
             )
         else:
-            prompt = "Cumprimente o usuário dizendo que está online e pronto, uma frase curta, em PT-BR."
+            prompt = (
+                f"{style} Faça UMA saudação de até 5 palavras informando que está pronto "
+                "(ex.: 'Às ordens, Senhor.' ou 'Pronto, Senhor.')."
+            )
         try:
             await self._safe_send_content([{"text": prompt}])
         except Exception as e:
@@ -1473,6 +1485,7 @@ class JarvisLive:
         prompt = (
             f"Summarize this conversation in 1-2 sentences in {lang}. "
             "Focus on what the user accomplished or discussed. "
+            "Refer to the assistant only in the first person ('I'), never by name. "
             "Output ONLY the summary text, nothing else:\n\n" + convo
         )
         try:
@@ -1528,7 +1541,7 @@ class JarvisLive:
             # Don't interrupt an active conversation
             with self._speaking_lock:
                 speaking = self._is_speaking
-            if speaking or (time.monotonic() - self._last_user_speech) < 10:
+            if speaking or (time.monotonic() - self._last_user_speech) < 10 or is_foreground_fullscreen():
                 continue
             try:
                 await self._safe_send_content([{"text": alert}])
@@ -1546,7 +1559,7 @@ class JarvisLive:
                 with self._speaking_lock:
                     speaking = self._is_speaking
                 recent_speech = (time.monotonic() - self._last_user_speech) < 30
-                if not speaking and not recent_speech:
+                if not speaking and not recent_speech and not is_foreground_fullscreen():
                     try:
                         alerts = await asyncio.to_thread(monitor_check_all)
                         memory = load_memory()
@@ -1585,51 +1598,43 @@ class JarvisLive:
     # ── Proactive mode ──────────────────────────────────────────────────────────
 
     async def _run_proactive_mode(self) -> None:
-        """
-        Background task: periodically checks if the user has been silent long enough,
-        then hands time + memory context to Gemini so it can decide what (if anything)
-        to say proactively. No hardcoded rules — Gemini makes the call.
-        """
+        """Proatividade local opt-in: regras de uso contínuo e hora decidem quando falar."""
         while True:
-            await asyncio.sleep(60)   # evaluate once per minute
-
+            await asyncio.sleep(60)
             if not self.session:
                 continue
-
+            now_dt = datetime.now(_TZ_BR)
+            self._proactive.observe(get_idle_seconds())
+            if not self._proactive.enabled:
+                continue
             with self._speaking_lock:
                 speaking = self._is_speaking
-            if speaking:
+            if speaking or (time.monotonic() - self._last_user_speech) < 30:
                 continue
-
-            if not self._proactive.should_trigger(self._last_user_speech):
+            trigger = self._proactive.due_trigger(now_dt)
+            if not trigger:
                 continue
-
-            self._proactive.mark_triggered()
-
             try:
-                memory       = await asyncio.to_thread(load_memory)
-                monitors     = await asyncio.to_thread(list_monitors)
-                recent_turns = self._session_log[-8:] if self._session_log else []
-
-                project_context = ""
-                try:
-                    from core.context_resolver import build_project_context, infer_active_project
-                    project_info = infer_active_project(active_window_title=None)
-                    if project_info.get("project_name") and float(project_info.get("confidence", 0.0) or 0.0) >= 0.75:
-                        project_context = build_project_context(active_window_title=project_info.get("active_window"))
-                except Exception:
-                    project_context = ""
-
-                prompt = self._proactive.build_prompt(
-                    memory         = memory,
-                    monitors       = monitors or None,
-                    recent_turns   = recent_turns or None,
-                    project_context = project_context or None,
-                )
-                await self._safe_send_content([{"text": prompt}])
-                self.ui.write_log("SYS: Proactive check-in.")
+                await self._safe_send_content([{"text": self._proactive.build_prompt(trigger, now_dt)}])
             except Exception as e:
                 print(f"[Proactive] ⚠️ {e}")
+                continue
+            self._proactive.mark_fired(trigger, now_dt)
+            write_guard.log_action("proactive", trigger, True)
+            self.ui.write_log(f"SYS: Aviso proativo ({trigger}).")
+
+    def set_proactive(self, state: str) -> str:
+        """Liga/desliga/consulta a proatividade local (opt-in). Persiste em configuração."""
+        state = (state or "status").strip().lower()
+        if state == "on":
+            self._proactive.enabled = True
+            _write_config_key("proactive_enabled", True)
+            return "Proatividade ativada."
+        if state == "off":
+            self._proactive.enabled = False
+            _write_config_key("proactive_enabled", False)
+            return "Proatividade desativada."
+        return "Proatividade ativada." if self._proactive.enabled else "Proatividade desativada."
 
     # ── main loop ───────────────────────────────────────────────────────────
 

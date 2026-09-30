@@ -341,27 +341,124 @@ def test_build_project_context_includes_project_summary(tmp_path):
     assert "VS Code" in context
 
 
-def test_proactive_prompt_includes_project_context():
-    from actions.proactive import ProactiveEngine
-
-    engine = ProactiveEngine(min_silence_secs=0, check_cooldown=0)
-    prompt = engine.build_prompt(
-        {},
-        recent_turns=["turno anterior"],
-        project_context="[PROJETO_ATIVO] Projeto ativo: 'jarvis_project' em 'D:/Jarvis-main'.",
-    )
-
-    assert "jarvis_project" in prompt.lower()
-    assert "Projeto ativo" in prompt
-    assert "não chamar ferramentas" in prompt.lower()
-
-
 def test_proactive_is_disabled_by_default():
+    from datetime import datetime
     from actions.proactive import ProactiveEngine
 
     engine = ProactiveEngine()
     assert engine.enabled is False
-    assert engine.should_trigger(999999.0) is False
+    assert engine.due_trigger(datetime(2026, 1, 1, 3, 0), mono=99999.0) is None
+
+
+def test_proactive_rules_use_local_session_and_time():
+    from datetime import datetime
+    from actions.proactive import ProactiveEngine
+
+    late = ProactiveEngine(enabled=True)
+    late.observe(0, mono=0)
+    assert late.due_trigger(datetime(2026, 1, 1, 3, 0), mono=4 * 3600) == "late_night"
+
+    daytime = ProactiveEngine(enabled=True)
+    daytime.observe(0, mono=0)
+    dt = datetime(2026, 1, 1, 12, 0)
+    assert daytime.due_trigger(dt, mono=4 * 3600) is None
+    assert daytime.due_trigger(dt, mono=6 * 3600) == "long_session"
+
+
+def test_proactive_limits_rule_frequency_per_hour_and_day():
+    from datetime import datetime
+    from actions.proactive import ProactiveEngine
+
+    engine = ProactiveEngine(enabled=True)
+    engine.observe(0, mono=0)
+    dt = datetime(2026, 1, 1, 3, 30)
+    fired_at = 6.5 * 3600
+    assert engine.due_trigger(dt, mono=fired_at) == "late_night"
+    engine.mark_fired("late_night", dt, mono=fired_at)
+    assert engine.due_trigger(dt, mono=fired_at + 1) is None
+    assert engine.due_trigger(dt, mono=fired_at + 3599) is None
+    assert engine.due_trigger(dt, mono=fired_at + 3600) == "long_session"
+
+    next_day = ProactiveEngine(enabled=True)
+    next_day.observe(0, mono=0)
+    first_day = datetime(2026, 1, 1, 3, 0)
+    assert next_day.due_trigger(first_day, mono=4 * 3600) == "late_night"
+    next_day.mark_fired("late_night", first_day, mono=4 * 3600)
+    assert next_day.due_trigger(
+        datetime(2026, 1, 2, 3, 0), mono=28 * 3600
+    ) == "late_night"
+
+
+def test_proactive_observe_resets_after_idle_and_ignores_unavailable_sensor():
+    from datetime import datetime
+    from actions.proactive import ProactiveEngine
+
+    engine = ProactiveEngine(enabled=True)
+    engine.observe(0, mono=100)
+    start = engine._session_start
+    engine.observe(-1.0, mono=200)
+    assert engine._session_start == start
+    engine.observe(700, mono=4 * 3600)
+    assert engine.session_seconds(mono=10 * 3600) == 0
+    assert engine.due_trigger(datetime(2026, 1, 1, 3, 0), mono=10 * 3600) is None
+
+
+def test_proactive_build_prompt_contains_rule_fact():
+    from datetime import datetime
+    from actions.proactive import ProactiveEngine
+
+    engine = ProactiveEngine(enabled=True)
+    engine.observe(0, mono=0)
+    prompt = engine.build_prompt("late_night", datetime(2026, 1, 1, 3, 0), mono=4 * 3600)
+    assert "PROACTIVE_CHECK" in prompt
+    assert "03:00" in prompt
+    assert "4h" in prompt
+    assert "Não chame ferramentas" in prompt
+
+
+def test_hw_sensors_report_unsupported_platform(monkeypatch):
+    import core.hw_sensors as sensors
+
+    monkeypatch.setattr(sensors, "_OS", "Linux")
+    assert sensors.get_idle_seconds() == -1.0
+    assert sensors.is_foreground_fullscreen() is False
+
+
+def test_jarvis_set_proactive_persists_only_state_changes(monkeypatch):
+    import main
+    from actions.proactive import ProactiveEngine
+    from main import JarvisLive
+
+    live = object.__new__(JarvisLive)
+    live._proactive = ProactiveEngine()
+    calls = []
+    monkeypatch.setattr(main, "_write_config_key", lambda key, value: calls.append((key, value)))
+
+    assert live.set_proactive("on") == "Proatividade ativada."
+    assert live._proactive.enabled is True
+    assert calls == [("proactive_enabled", True)]
+    assert live.set_proactive("off") == "Proatividade desativada."
+    assert live._proactive.enabled is False
+    assert calls == [("proactive_enabled", True), ("proactive_enabled", False)]
+    assert live.set_proactive("status") == "Proatividade desativada."
+    assert len(calls) == 2
+
+
+def test_proactive_mode_tool_delegates_to_jarvis():
+    from core.tool_registry import _proactive_mode_tool
+
+    class FakeJarvis:
+        def __init__(self):
+            self.states = []
+
+        def set_proactive(self, state):
+            self.states.append(state)
+            return f"state={state}"
+
+    jarvis = FakeJarvis()
+    assert _proactive_mode_tool({"state": "on"}, jarvis=jarvis) == "state=on"
+    assert jarvis.states == ["on"]
+    assert _proactive_mode_tool({"state": "on"}) == "Proatividade indisponível."
 
 
 def test_runtime_declares_context_tool():
@@ -375,7 +472,10 @@ def test_tool_registry_declares_core_tools():
     from core.tool_registry import get_declarations
 
     names = {tool["name"] for tool in get_declarations()}
-    assert {"open_app", "weather_report", "web_search", "computer_settings", "file_controller"}.issubset(names)
+    assert {
+        "open_app", "weather_report", "web_search", "computer_settings",
+        "file_controller", "proactive_mode",
+    }.issubset(names)
 
 
 def test_active_window_title_uses_windows_api(monkeypatch):
@@ -1651,6 +1751,7 @@ def test_dev_agent_tool_runs_in_background_and_announces_result(monkeypatch):
     result = tr._dev_agent_tool({"description": "x"}, player=None, speak=None, jarvis=jarvis)
 
     assert result.startswith("[TAREFA_INICIADA")
+    assert "Em andamento" in result
     for _ in range(30):
         if jarvis.speak_calls:
             break
@@ -1725,3 +1826,190 @@ def test_interrupt_speaks_directly_when_nothing_was_active():
     live.interrupt()
 
     assert spoken
+
+
+def test_humanize_for_speech_replaces_paths_and_preserves_urls(monkeypatch):
+    import core.knowledge_vault as kv
+    import core.paths as paths
+
+    monkeypatch.setattr(paths, "get_home_dir", lambda: Path("C:/Users/Tester"))
+    monkeypatch.setattr(kv, "OBSIDIAN_VAULT", Path("D:/Vault"))
+
+    project = paths.humanize_for_speech(
+        r"C:\Users\Tester\Desktop\JarvisProjects\snake_game"
+    )
+    assert "snake_game" in project and "pasta de projetos" in project and "C:" not in project
+
+    assert "na sua área de trabalho" in paths.humanize_for_speech(
+        r"C:\Users\Tester\Desktop"
+    )
+    assert paths.humanize_for_speech(
+        r"Saved to: C:\Users\Tester\Downloads\x.pdf."
+    ) == "Saved to: x.pdf (nos seus downloads)."
+
+    vault_note = paths.humanize_for_speech(r"D:\Vault\Nota.md")
+    assert "Nota.md" in vault_note and "vault" in vault_note
+    assert paths.humanize_for_speech(r"E:\Outro\relatorio.txt") == "relatorio.txt"
+    assert paths.humanize_for_speech("https://www.kabum.com.br/produto") == (
+        "https://www.kabum.com.br/produto"
+    )
+    assert paths.humanize_for_speech("http://a.com/x") == "http://a.com/x"
+    assert paths.humanize_for_speech("texto simples") == "texto simples"
+
+
+def test_main_speak_humanizes_paths(monkeypatch):
+    import main
+    from main import JarvisLive
+
+    live = object.__new__(JarvisLive)
+    live._loop = object()
+    live.session = object()
+    sent = []
+
+    async def fake(parts, turn_complete=True):
+        sent.append(parts[0]["text"])
+
+    live._safe_send_content = fake
+    monkeypatch.setattr(
+        "main.asyncio.run_coroutine_threadsafe",
+        lambda coro, loop: asyncio.run(coro),
+    )
+    live.speak(r"Salvo em: C:\Users\Zed\Desktop\JarvisProjects\snake_game")
+
+    assert "C:\\" not in sent[0]
+    assert "snake_game" in sent[0]
+
+
+def test_build_summary_excludes_terminal_output_and_humanizes_path():
+    from core.tool_registry import _build_summary
+
+    summary = _build_summary(
+        "Project 'x' is working, sir. Saved to: C:\\a\\b\\x\n\nOutput:\nlinha1\nlinha2"
+    )
+    assert "Output" not in summary
+    assert "linha1" not in summary
+    assert "C:\\" not in summary
+
+
+def test_cancelled_dev_agent_does_not_announce_completion(monkeypatch):
+    import core.tool_registry as tr
+    from core.background_tasks import BackgroundTaskTracker
+
+    def fake_dev_agent(parameters, response=None, player=None, session_memory=None,
+                       speak=None, cancel_event=None):
+        cancel_event.set()
+        return "x"
+
+    monkeypatch.setattr(tr, "dev_agent", fake_dev_agent)
+
+    class FakeJarvis:
+        def __init__(self):
+            self._tasks = BackgroundTaskTracker()
+            self.speak_calls = []
+
+        def speak(self, text):
+            self.speak_calls.append(text)
+
+    jarvis = FakeJarvis()
+    result = tr._dev_agent_tool({"description": "x"}, jarvis=jarvis)
+    task_id = result.split("id=")[1].split("]")[0]
+    for _ in range(30):
+        task = jarvis._tasks.get(task_id)
+        if task["status"] != "running":
+            break
+        time.sleep(0.05)
+
+    assert task["status"] == "cancelled"
+    assert jarvis.speak_calls == []
+
+
+def test_humanized_code_helper_return(monkeypatch):
+    import core.tool_registry as tr
+
+    monkeypatch.setattr(
+        tr, "code_helper",
+        lambda **kw: r"Saved to: C:\Users\Zed\Desktop\a.py",
+    )
+    result = tr._code_helper_tool({"action": "write"})
+
+    assert "C:\\" not in result
+    assert "a.py" in result
+
+
+def test_split_log_parses_only_short_unbracketed_prefixes():
+    from ui import _split_log
+
+    assert _split_log("SYS: pronto") == ("SYS", "pronto")
+    assert _split_log("You: oi") == ("You", "oi")
+    assert _split_log("JARVIS: Feito.") == ("JARVIS", "Feito.")
+    assert _split_log("[DevAgent] Writing x.py...") == (
+        "SISTEMA", "[DevAgent] Writing x.py..."
+    )
+    text = "[DevAgent] Project: calc | Files: 2"
+    assert _split_log(text) == ("SISTEMA", text)
+    assert _split_log("[open_app] Spotify") == ("SISTEMA", "[open_app] Spotify")
+    assert _split_log("SYS:") == ("SISTEMA", "SYS:")
+
+
+def test_join_transcript_joins_fragments_without_false_word_spaces():
+    from main import _clean_transcript, _join_transcript
+
+    assert _join_transcript(["Já", " vi", "z", ",", " que horas"]) == "Já viz, que horas"
+    assert _join_transcript(["a", "  b"]) == "a b"
+    cleaned = [_clean_transcript("oi<ctrl46>"), _clean_transcript(" tudo")]
+    assert _join_transcript(cleaned) == "oi tudo"
+    assert _join_transcript([]) == ""
+
+
+def test_write_guard_accepts_split_confirmations_and_rejections():
+    from core import write_guard
+
+    def decide(key, utterance):
+        write_guard.request_confirmation(key, "ação", lambda: "executada")
+        assert write_guard.on_turn_complete("", None) is None
+        return write_guard.on_turn_complete(utterance, time.monotonic())
+
+    assert decide("split-confirm", "con fi rmo")[0] == "confirm"
+    assert decide("jarvis-split-confirm", "Jarvis, con firmo")[0] == "confirm"
+
+    decision = decide("split-cancel", "n ao con fi rmo")
+    assert decision[0] == "cancel" and decision[2] == "negacao"
+    decision = decide("plain-cancel", "não confirmo")
+    assert decision[0] == "cancel" and decision[2] == "negacao"
+
+    decision = decide("long-confirm", "eu confirmo que a reunião foi remarcada para amanhã")
+    assert decision[0] == "retry"
+    write_guard.clear_pending()
+    decision = decide("wrong-inflection", "con fi rma")
+    assert decision[0] == "retry"
+
+
+def test_boot_greeting_uses_first_person_without_self_name(monkeypatch):
+    from datetime import datetime
+    import main
+    from main import JarvisLive
+
+    live = object.__new__(JarvisLive)
+    live.session = object()
+    sent = []
+
+    async def fake(parts, turn_complete=True):
+        sent.append(parts[0]["text"])
+
+    live._safe_send_content = fake
+    monkeypatch.setattr(main, "pop_last_session", lambda: None)
+    monkeypatch.delenv("JARVIS_NEW_ENVIRONMENT", raising=False)
+    asyncio.run(live._send_boot_greeting())
+    assert "primeira pessoa" in sent[0]
+    assert "próprio nome" in sent[0]
+    assert "Cumprimente" not in sent[0]
+
+    sent.clear()
+    monkeypatch.setattr(
+        main,
+        "pop_last_session",
+        lambda: {"date": datetime.now().strftime("%Y-%m-%d"), "summary": "Testamos o vault."},
+    )
+    asyncio.run(live._send_boot_greeting())
+    assert "Testamos o vault." in sent[0]
+    assert "primeira pessoa" in sent[0]

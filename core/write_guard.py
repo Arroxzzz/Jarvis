@@ -63,6 +63,7 @@ MAX_CONFIRM_WORDS = 4
 DONE_COOLDOWN_SEC = 60.0
 _CANCEL_WORDS = {"nao", "cancela", "cancele", "cancelar", "pare", "deixa", "esquece",
                  "desisto", "errado", "nunca"}
+_CONFIRM_WORDS = ("confirmo",)
 
 _gate_lock = threading.Lock()
 _pending: dict | None = None
@@ -124,10 +125,13 @@ def _judge(text: str, utter_at: float | None):
     if utter_at and utter_at < p["armed_at"]:
         return None
     words = _norm_words(text)
-    if set(words) & _CANCEL_WORDS:
+    joined = "".join(words)
+    short = len(joined) <= 18
+    if set(words) & _CANCEL_WORDS or (short and any(c in joined for c in _CANCEL_WORDS)):
         _pending = None
         return ("cancel", p, "negacao")
-    if "confirmo" in words and len(words) <= MAX_CONFIRM_WORDS:
+    if ((set(words) & set(_CONFIRM_WORDS) and len(words) <= MAX_CONFIRM_WORDS)
+            or (short and any(c in joined for c in _CONFIRM_WORDS))):
         _pending = None
         _last_done = (p["key"], now)
         return ("confirm", p, "")

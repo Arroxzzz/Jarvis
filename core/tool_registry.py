@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import functools
 import inspect
 from dataclasses import dataclass
 from typing import Any, Callable
@@ -22,6 +23,7 @@ from actions.web_search import web_search as web_search_action
 from actions.weather_report import weather_action
 from actions.youtube_video import youtube_video
 from core import write_guard
+from core.paths import humanize_for_speech
 from core.tool_declarations import TOOL_DECLARATIONS
 
 
@@ -59,6 +61,21 @@ def _decl(name: str) -> dict[str, Any]:
         "description": f"Registered tool: {name}",
         "parameters": {"type": "OBJECT", "properties": {}},
     }
+
+
+def _humanized(fn):
+    """Aplica humanize_for_speech ao retorno de ferramentas que informam onde salvaram algo."""
+    @functools.wraps(fn)
+    def _wrap(*a, **k):
+        out = fn(*a, **k)
+        return humanize_for_speech(out) if isinstance(out, str) else out
+    return _wrap
+
+
+def _build_summary(result) -> str:
+    """Só o veredito do build (1º parágrafo): sem saída de terminal e sem caminhos."""
+    head = str(result).split("\n\n")[0]
+    return humanize_for_speech(head)[:300]
 
 
 @register_tool("open_app", declaration=_decl("open_app"), kind="simple")
@@ -141,6 +158,7 @@ def _desktop_control_tool(args: dict, *, player=None, **_extra):
 
 
 @register_tool("code_helper", declaration=_decl("code_helper"), kind="advanced")
+@_humanized
 def _code_helper_tool(args: dict, *, player=None, speak=None, **_extra):
     return code_helper(parameters=args, player=player, speak=speak)
 
@@ -149,9 +167,12 @@ def _code_helper_tool(args: dict, *, player=None, speak=None, **_extra):
 def _dev_agent_tool(args: dict, *, player=None, speak=None, jarvis=None, **_extra):
     def _work(cancel_event):
         result = dev_agent(parameters=args, player=player, speak=None, cancel_event=cancel_event)
-        if jarvis is not None:
+        if jarvis is not None and not cancel_event.is_set():
             try:
-                jarvis.speak(f"[BUILD_CONCLUIDO — fale agora, breve, sem ler a etiqueta] {result}")
+                jarvis.speak(
+                    "[BUILD_CONCLUIDO — fale agora: UMA frase, sem caminhos, sem etapas, "
+                    f"sem ler a etiqueta] {_build_summary(result)}"
+                )
             except Exception:
                 pass
         return result
@@ -161,9 +182,10 @@ def _dev_agent_tool(args: dict, *, player=None, speak=None, jarvis=None, **_extr
 
     task_id = jarvis._tasks.start("dev_agent", _work)
     return (
-        f"[TAREFA_INICIADA em segundo plano, id={task_id}] Diga ao Senhor, em uma frase, que o "
-        "build começou e que você avisa quando terminar. NÃO chame esta ferramenta de novo para "
-        "este mesmo pedido; se ele perguntar o andamento, use background_status."
+        f"[TAREFA_INICIADA em segundo plano, id={task_id}] Responda SOMENTE \"Em andamento, Senhor.\" "
+        "(ou variação de até 4 palavras). Não diga o que será feito. Se você já falou algo ANTES de "
+        "chamar esta ferramenta, fique em silêncio. NÃO chame esta ferramenta de novo para este pedido; "
+        "o aviso de conclusão chega sozinho."
     )
 
 
@@ -182,12 +204,20 @@ def _cancel_background_task_tool(args: dict, *, jarvis=None, **_extra):
     return f"{n} tarefa(s) sinalizada(s) para cancelar." if n else "Nenhuma tarefa em segundo plano rodando."
 
 
+@register_tool("proactive_mode", declaration=_decl("proactive_mode"), kind="simple")
+def _proactive_mode_tool(args: dict, *, jarvis=None, **_extra):
+    if jarvis is None or not hasattr(jarvis, "set_proactive"):
+        return "Proatividade indisponível."
+    return jarvis.set_proactive(str(args.get("state") or "status"))
+
+
 @register_tool("web_search", declaration=_decl("web_search"), kind="advanced")
 def _web_search_tool(args: dict, *, player=None, session_memory=None, **_extra):
     return web_search_action(parameters=args, player=player, session_memory=session_memory)
 
 
 @register_tool("file_processor", declaration=_decl("file_processor"), kind="advanced")
+@_humanized
 def _file_processor_tool(args: dict, *, player=None, speak=None, **_extra):
     return file_processor(parameters=args, player=player, speak=speak)
 
@@ -198,6 +228,7 @@ def _computer_control_tool(args: dict, *, player=None, **_extra):
 
 
 @register_tool("flight_finder", declaration=_decl("flight_finder"), kind="advanced")
+@_humanized
 def _flight_finder_tool(args: dict, *, player=None, **_extra):
     return flight_finder(parameters=args, player=player)
 

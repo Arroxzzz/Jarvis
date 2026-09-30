@@ -1,5 +1,6 @@
 """core/hw_sensors.py — leitura única de GPU/temperatura (zero subprocess)."""
 import ctypes
+import os
 import platform
 
 _OS = platform.system()
@@ -77,3 +78,52 @@ def get_cpu_temp() -> float:
             pass
 
     return -1.0
+
+
+class _LASTINPUTINFO(ctypes.Structure):
+    _fields_ = [("cbSize", ctypes.c_uint), ("dwTime", ctypes.c_uint)]
+
+
+def get_idle_seconds() -> float:
+    """Segundos desde o último teclado/mouse (Windows, chamada nativa). -1.0 se indisponível."""
+    if _OS != "Windows":
+        return -1.0
+    try:
+        info = _LASTINPUTINFO()
+        info.cbSize = ctypes.sizeof(info)
+        if not ctypes.windll.user32.GetLastInputInfo(ctypes.byref(info)):
+            return -1.0
+        kernel32 = ctypes.windll.kernel32
+        kernel32.GetTickCount.restype = ctypes.c_uint
+        return ((kernel32.GetTickCount() - info.dwTime) & 0xFFFFFFFF) / 1000.0
+    except Exception:
+        return -1.0
+
+
+def is_foreground_fullscreen() -> bool:
+    """True se a janela em primeiro plano cobre a tela inteira e não tem barra de título."""
+    if _OS != "Windows":
+        return False
+    try:
+        from ctypes import wintypes
+        user32 = ctypes.windll.user32
+        hwnd = user32.GetForegroundWindow()
+        if not hwnd:
+            return False
+        pid = wintypes.DWORD()
+        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+        if pid.value == os.getpid():
+            return False
+        rect = wintypes.RECT()
+        user32.GetWindowRect(hwnd, ctypes.byref(rect))
+        if not (rect.left <= 0 and rect.top <= 0
+                and rect.right >= user32.GetSystemMetrics(0)
+                and rect.bottom >= user32.GetSystemMetrics(1)):
+            return False
+        if user32.GetWindowLongW(hwnd, -16) & 0x00C00000:
+            return False
+        cls = ctypes.create_unicode_buffer(64)
+        user32.GetClassNameW(hwnd, cls, 64)
+        return cls.value not in ("Progman", "WorkerW", "Shell_TrayWnd")
+    except Exception:
+        return False

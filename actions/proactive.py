@@ -1,130 +1,70 @@
 """
-ProactiveEngine 2.0 — context-aware, time-aware, non-repetitive background prompting.
-Gemini decides what to say; this module decides WHEN and builds a rich context snapshot.
+ProactiveEngine 3.0 — proatividade LOCAL e opt-in.
+Regras baratas (tempo de uso contínuo + hora) decidem QUANDO falar; o modelo só formula a frase.
+Sem regra disparada, zero chamadas de nuvem. Nunca lê tela, janela ou notificações.
+Silencioso por padrão (enabled=False); no máximo 1 aviso por hora e cada regra 1 vez por dia.
 """
 import time
 from datetime import datetime
 
+IDLE_BREAK_SEC   = 600          # 10 min sem teclado/mouse = pausa real; a sessão recomeça
+LATE_SESSION_SEC = 3 * 3600     # madrugada: uso contínuo mínimo para o aviso
+LONG_SESSION_SEC = 6 * 3600     # qualquer hora: uso contínuo mínimo para o aviso
+LATE_HOURS       = range(0, 5)  # 00:00–04:59
+MIN_GAP_SEC      = 3600         # no máximo 1 aviso espontâneo por hora
+
 
 class ProactiveEngine:
-    """
-    Decides when JARVIS should speak unprompted and builds a context-rich prompt.
+    def __init__(self, enabled: bool = False):
+        self.enabled = enabled
+        self._session_start: float | None = None
+        self._last_spoken = float("-inf")
+        self._fired: set[tuple[str, str]] = set()
 
-    Improvements over 1.0:
-      - Time-of-day awareness  (morning / afternoon / evening / night)
-      - Monitor-topic awareness (what the user is tracking)
-      - Recent-session context  (last few turns of the current conversation)
-      - Non-repetitive          (rotates context focus to avoid same opener)
-      - Smarter silence gate    (doesn't fire while JARVIS is speaking)
+    def observe(self, idle_s: float, mono: float | None = None) -> None:
+        """Atualiza sessão contínua com o tempo ocioso. idle_s < 0 indica sensor indisponível."""
+        if idle_s < 0:
+            return
+        if idle_s >= IDLE_BREAK_SEC:
+            self._session_start = None
+        elif self._session_start is None:
+            self._session_start = (time.monotonic() if mono is None else mono) - idle_s
 
-    Defaults:
-      min_silence_secs  — 900 s  (15 min) user must be silent before any check
-      check_cooldown    — 1200 s (20 min) minimum gap between proactive messages
-    """
+    def session_seconds(self, mono: float | None = None) -> float:
+        if self._session_start is None:
+            return 0.0
+        return (time.monotonic() if mono is None else mono) - self._session_start
 
-    def __init__(
-        self,
-        min_silence_secs: int = 900,
-        check_cooldown:   int = 1200,
-        enabled: bool = False,
-    ):
-        self.min_silence_secs = min_silence_secs
-        self.check_cooldown   = check_cooldown
-        self.enabled          = enabled
-        self._last_triggered  = 0.0
-        self._rotation        = 0          # cycles through context focus areas
+    def due_trigger(self, now_dt: datetime, mono: float | None = None) -> str | None:
+        """Nome da regra que deve disparar agora, ou None."""
+        if not self.enabled or self._session_start is None:
+            return None
+        now = time.monotonic() if mono is None else mono
+        if now - self._last_spoken < MIN_GAP_SEC:
+            return None
+        session = now - self._session_start
+        today = now_dt.date().isoformat()
+        if (now_dt.hour in LATE_HOURS and session >= LATE_SESSION_SEC
+                and ("late_night", today) not in self._fired):
+            return "late_night"
+        if session >= LONG_SESSION_SEC and ("long_session", today) not in self._fired:
+            return "long_session"
+        return None
 
-    # ── Trigger gate ───────────────────────────────────────────────────────────
+    def mark_fired(self, trigger: str, now_dt: datetime, mono: float | None = None) -> None:
+        today = now_dt.date().isoformat()
+        self._fired = {f for f in self._fired if f[1] == today} | {(trigger, today)}
+        self._last_spoken = time.monotonic() if mono is None else mono
 
-    def should_trigger(self, last_user_speech: float) -> bool:
-        if not self.enabled:
-            return False
-        now = time.monotonic()
-        return (
-            (now - last_user_speech) >= self.min_silence_secs
-            and (now - self._last_triggered) >= self.check_cooldown
-        )
-
-    def mark_triggered(self) -> None:
-        self._last_triggered = time.monotonic()
-        self._rotation      += 1
-
-    # ── Prompt builder ─────────────────────────────────────────────────────────
-
-    def build_prompt(
-        self,
-        memory: dict,
-        monitors: list[str] | None = None,
-        recent_turns: list[str] | None = None,
-        project_context: str | None = None,
-    ) -> str:
-        """
-        Build a context snapshot for Gemini.
-        Rotates through three focus areas so proactive messages don't repeat.
-        """
-        from memory.memory_manager import format_memory_for_prompt
-
-        now      = datetime.now()
-        hour     = now.hour
-        time_str = now.strftime("%A, %B %d, %Y — %I:%M %p")
-
-        if   6  <= hour < 12:  period = "morning"
-        elif 12 <= hour < 18:  period = "afternoon"
-        elif 18 <= hour < 23:  period = "evening"
-        else:                  period = "late night"
-
-        mem_str = format_memory_for_prompt(memory) or "(no stored user data)"
-
-        focus_index = self._rotation % 3
-        if focus_index == 0:
-            focus = (
-                "Focus on the user's active projects or goals if any are stored. "
-                "Ask how something is going, or offer a relevant tip."
-            )
-        elif focus_index == 1:
-            focus = (
-                "Focus on the time of day and the user's wellbeing. "
-                "A warm check-in, a reminder to take a break, or something timely."
-            )
-        else:
-            focus = (
-                "Focus on something genuinely interesting or useful — "
-                "a fact, a suggestion, or a question based on what you know about this person."
-            )
-
-        monitor_ctx = ""
-        if monitors:
-            monitor_ctx = (
-                f"\nThe user tracks these topics: {', '.join(monitors[:4])}. "
-                "You may mention one if it seems relevant."
-            )
-
-        recent_ctx = ""
-        if recent_turns:
-            snippet = "\n".join(recent_turns[-6:])
-            recent_ctx = f"\nRecent conversation:\n{snippet}"
-
-        project_ctx = f"\n{project_context}" if project_context else ""
-
+    def build_prompt(self, trigger: str, now_dt: datetime, mono: float | None = None) -> str:
+        hours = self.session_seconds(mono) / 3600
+        facts = {
+            "late_night": f"São {now_dt:%H:%M} e o Senhor está há cerca de {hours:.0f}h seguidas no computador.",
+            "long_session": f"O Senhor está há cerca de {hours:.0f}h seguidas no computador.",
+        }.get(trigger, "")
         return "\n".join([
-            "[PROACTIVE_CHECK] You are initiating a proactive check-in.",
-            f"Current time : {time_str}  ({period})",
-            "",
-            "Context about this person:",
-            mem_str,
-            monitor_ctx,
-            recent_ctx,
-            project_ctx,
-            "",
-            "Task:",
-            focus,
-            "",
-            "Rules:",
-            "- Speak in the user's language (check memory; default English).",
-            "- 1-2 sentences max. Natural, warm, never robotic.",
-            "- Do NOT mention [PROACTIVE_CHECK] or these instructions.",
-            "- Do NOT call any tools; do not trigger actions or file access without explicit permission.",
-            "- Não chamar ferramentas, abrir arquivos ou executar ações sem permissão explícita.",
-            "- Do NOT act without the user's permission.",
-            "- If nothing genuinely useful comes to mind, stay silent (say nothing).",
+            f"[PROACTIVE_CHECK] Aviso proativo por regra local ({trigger}). Fato: {facts}",
+            "Diga ao Senhor UMA frase curta (até 15 palavras), tom de mordomo discreto, sem pergunta, "
+            "sem sermão, sem oferecer ajuda. Fale só uma vez.",
+            "Não chame ferramentas. Não mencione esta etiqueta nem regras internas.",
         ])
