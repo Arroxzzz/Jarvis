@@ -1980,8 +1980,8 @@ def test_write_guard_accepts_split_confirmations_and_rejections():
     decision = decide("long-confirm", "eu confirmo que a reunião foi remarcada para amanhã")
     assert decision[0] == "retry"
     write_guard.clear_pending()
-    decision = decide("wrong-inflection", "con fi rma")
-    assert decision[0] == "retry"
+    assert decide("confirm-inflection", "con fi rma")[0] == "confirm"
+    assert decide("non-confirmation", "sim, pode fazer")[0] == "retry"
 
 
 def test_boot_greeting_uses_first_person_without_self_name(monkeypatch):
@@ -2013,3 +2013,113 @@ def test_boot_greeting_uses_first_person_without_self_name(monkeypatch):
     asyncio.run(live._send_boot_greeting())
     assert "Testamos o vault." in sent[0]
     assert "primeira pessoa" in sent[0]
+
+
+def test_wake_config_and_model_resolution(monkeypatch, tmp_path):
+    import config
+    from core import wake_word_gate
+
+    monkeypatch.setattr(config, "get_config", lambda: {})
+    assert wake_word_gate._wake_cfg() == {
+        "enabled": False,
+        "model": "hey_jarvis",
+        "threshold": 0.5,
+        "grace": 20.0,
+        "buffer": 8.0,
+        "vad": 0.0,
+    }
+
+    monkeypatch.setattr(
+        config,
+        "get_config",
+        lambda: {
+            "wake_word_enabled": True,
+            "wake_word_model": "models/wake/jarvis.onnx",
+            "wake_word_threshold": "0.35",
+            "wake_word_grace_sec": 15,
+        },
+    )
+    cfg = wake_word_gate._wake_cfg()
+    assert cfg["enabled"] is True
+    assert cfg["model"] == "models/wake/jarvis.onnx"
+    assert cfg["threshold"] == 0.35
+    assert isinstance(cfg["threshold"], float)
+    assert cfg["grace"] == 15.0
+
+    monkeypatch.setattr(wake_word_gate, "get_base_dir", lambda: tmp_path)
+    assert wake_word_gate._resolve_model("hey_jarvis") == "hey_jarvis"
+    assert wake_word_gate._resolve_model("models/wake/jarvis.onnx") == str(
+        tmp_path / "models/wake/jarvis.onnx"
+    )
+    absolute = str(tmp_path / "x.onnx")
+    assert wake_word_gate._resolve_model(absolute) == absolute
+
+
+def test_wake_gate_scores_any_model_and_tracks_detections(capsys):
+    from core.wake_word_gate import WakeWordGate
+
+    class FakeModel:
+        def __init__(self, score):
+            self.score = score
+
+        def predict(self, _frame):
+            return {"a": 0.1, "jarvis": self.score}
+
+    def make_gate(score):
+        gate = object.__new__(WakeWordGate)
+        gate._available = True
+        gate._model = FakeModel(score)
+        gate._rolling_buffer = bytearray()
+        gate._frame_buffer = bytearray()
+        gate._max_buffer_bytes = 25600
+        gate._gate_open = False
+        gate._grace_until = 0.0
+        gate.threshold = 0.5
+        gate.detections = 0
+        return gate
+
+    detected = make_gate(0.9)
+    chunk = b"\x00" * 2560
+    assert isinstance(detected.feed(chunk), bytes)
+    assert detected.detections == 1
+    assert detected._gate_open is True
+    assert "detectado" in capsys.readouterr().out
+
+    missed = make_gate(0.3)
+    assert missed.feed(chunk) is None
+    assert missed.detections == 0
+
+
+def test_wake_gate_status_line_reports_operational_state():
+    from core.wake_word_gate import WakeWordGate
+
+    gate = object.__new__(WakeWordGate)
+    gate._available = True
+    gate._model_name = "jarvis.onnx"
+    gate.threshold = 0.4
+    gate.grace_seconds = 20
+    assert "ATIVO" in gate.status_line()
+    assert "jarvis.onnx" in gate.status_line()
+
+    gate._available = False
+    gate.load_error = "falhou"
+    assert "FALHOU" in gate.status_line()
+    assert "ABERTO" in gate.status_line()
+
+    gate.load_error = None
+    assert "desligado" in gate.status_line()
+
+
+def test_wake_eval_events_and_wave_roundtrip(tmp_path):
+    import numpy as np
+    from tools.wake_eval import _events, _load, _save
+
+    scores = [0.0] * 60
+    for index in (3, 10, 40):
+        scores[index] = 0.9
+    assert _events(scores, 0.5) == 2
+
+    pcm = np.array([1, -2, 300], dtype=np.int16)
+    path = tmp_path / "sample.wav"
+    _save(path, pcm)
+    assert np.array_equal(_load(path), pcm)

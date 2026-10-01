@@ -33,3 +33,7 @@ config/api_keys.json
 __pycache__/
 *.pyc
 .DS_Store
+
+# Wake word: gravações da voz do Senhor (nunca versionar)
+wake_samples/
+*.wav

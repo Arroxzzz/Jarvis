@@ -63,7 +63,7 @@ MAX_CONFIRM_WORDS = 4
 DONE_COOLDOWN_SEC = 60.0
 _CANCEL_WORDS = {"nao", "cancela", "cancele", "cancelar", "pare", "deixa", "esquece",
                  "desisto", "errado", "nunca"}
-_CONFIRM_WORDS = ("confirmo",)
+_CONFIRM_WORDS = ("confirmo", "confirma")
 
 _gate_lock = threading.Lock()
 _pending: dict | None = None

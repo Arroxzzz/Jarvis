@@ -168,5 +168,8 @@ A linha de produto atual está pronta para uso seguro e validado. O próximo ava
 - [x] Fase 7: proatividade local opt-in (regras de uso contínuo + hora; get_idle_seconds/is_foreground_fullscreen nativos; 1 aviso/hora, cada regra 1x/dia; proactive_mode por voz; alertas de sistema e notícias mudos em tela cheia; auditoria em audit_log.jsonl)
 - [x] Fase 6C: log do painel sem duplicar/partir (_split_log); transcrição sem espaços falsos (_join_transcript) e portão de confirmação tolerante a palavra partida; saudação de boot em 1ª pessoa sem citar o nome; regra "nunca diga o próprio nome" no prompt; diagnóstico TEMPORÁRIO [Transcript] em _receive_audio (remover após descobrir a causa da frase duplicada em turnos com ferramenta)
 
-## PRÓXIMO ITEM IMEDIATO — plano de 7 fases concluído
-- [ ] Calibrar/treinar a detecção de wake word para "Jarvis" com a pronúncia PT-BR do Senhor Paulo e só depois religar "wake_word_enabled": true. Prioridade sobre qualquer escopo novo.
+## Fase 8 — Wake word (fecha o plano)
+- [x] 8A: wake word configurável (wake_word_model, wake_word_threshold, wake_word_grace_sec, wake_word_buffer_sec, wake_word_vad), estado visível no painel, tools/wake_eval.py, "confirma" aceito no portão de voz
+- [ ] 8B: gravar amostras (pos / pos_hey / neg / ambient), medir o hey_jarvis atual, decidir entre ajustar limiar ou treinar modelo próprio e treinar
+- [ ] 8C: apontar wake_word_model para o .onnx e ligar wake_word_enabled: true
+- [ ] 8D: validar 3 dias de uso real (≥ 90% de acerto, ≤ 1 falso/hora)

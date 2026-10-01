@@ -234,6 +234,7 @@ class JarvisLive:
 
         self.ui             = ui
         self._wake_gate      = WakeWordGate()
+        self.ui.write_log(self._wake_gate.status_line())
         self._asst_name     = "JARVIS"   # updated each session from config
         self.session              = None
         self.audio_in_queue       = None
