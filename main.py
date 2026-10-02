@@ -1749,7 +1749,7 @@ class JarvisLive:
                 await self._finish_session_cycle()
 
 def main():
-    ui = JarvisUI("face.png")
+    ui = JarvisUI()
 
     def runner():
         ui.wait_for_api_key()
