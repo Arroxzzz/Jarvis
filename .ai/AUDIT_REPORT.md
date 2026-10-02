@@ -86,7 +86,7 @@ manual e configuração de produção continuam sujeitos a confirmação humana.
   runtime/configuração da UI.
 - `core/sync_manager.py` — **Alta quanto à integração técnica**. A tool
   `sync_memory` chama o módulo para sincronizar arquivos cifrados e estado;
-  o usuário confirmou posteriormente que a sincronização com Supabase foi
+  o usuário confirmou posteriormente que a sincronização com Supabase foi completamente e
   totalmente descartada. Ver a classificação de decisão ao final.
 - `actions/file_processor.py` — **Alta**. Invocado pela tool registrada; usa
   `pdfplumber` e fallback `PyPDF2` para PDF, além de `PIL` e `python-pptx` em
