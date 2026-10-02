@@ -6,6 +6,7 @@
 - `main.py` mantém `JarvisLive` em thread própria com `asyncio`; a UI Qt fica na thread principal.
 - Gemini Live é o caminho primário de voz, com PCM via `sounddevice`, transcrições e VAD automático.
 - A sessão Live usa `thinking_budget=0` e `include_thoughts=False` para reduzir latência; o VAD usa sensibilidade alta, buffer de 300 ms e silêncio de 700 ms.
+- O watchdog atual reconecta quando uma resposta pendente excede 20 segundos; o antigo achado H5 sobre contador que nunca alcançava o limite não descreve mais o código.
 - A UI WebGL foi validada: restauração após minimizar corrigida, telemetria removida e painel de pesquisas separado do log.
 - Sinais Qt continuam obrigatórios para chamadas ao `QWebEngineView`.
 - O microfone foi diagnosticado e restaurado; o VAD foi ajustado.
@@ -15,7 +16,7 @@
   conclusão, duração de tools e duração de providers são emitidos como eventos `[METRIC]`.
 - `core/llm_client.py` mede chamadas remotas Groq/OpenRouter sem registrar conteúdo.
 - Comandos de texto agora iniciam eventos `[METRIC]` próprios; o caminho sem microfone participa do baseline.
-- `main.py` e `ui.py` compilam sem erros; suíte relevante atual: 78 testes passando.
+- Última suíte registrada nos documentos: 78 testes passando; não foi reexecutada nesta atualização documental.
 - `core/llm_client.py` agora registra `Retry-After`/rate-limit, bloqueia provider em circuit breaker e faz fallback Groq→OpenRouter de forma controlada.
 - O loader de plugins foi ajustado para opt-in por padrão: plugins novos descobertos em `/plugins` nascem desligados até ativação explícita no Plugin Manager; isso evita que código de terceiro seja ativado por omissão.
 - O log de boot em `main.py` agora conta plugins ativos e desligados, sem anunciar módulos indisponíveis como “carregados”.
@@ -23,6 +24,10 @@
 - A confirmação e a auditoria de ações estão centralizadas em `core/write_guard.py`; os fluxos de arquivo e configurações usam o guard sem alterar o áudio ou a sessão Live.
 - O runtime de tarefas em background foi extraído para `core/background_tasks.py`; `JarvisLive` usa `BackgroundTaskTracker` para contador, lock, deduplicação e entrega de resultados ao painel.
 - O vault Obsidian agora cria WikiLinks automáticos por regex, oferece backlinks e participa do índice SQLite de contexto; a relevância considera a quantidade de backlinks.
+- O wake word é configurável e opt-in por padrão no código; na configuração local atual está habilitado com um modelo ONNX próprio em `models/wake/jarvis.onnx`. A validação de três dias de uso real continua pendente.
+- A proatividade local existe com regras de tempo de uso/horário, mas está desabilitada na configuração local atual.
+- Há criptografia local AES-GCM com derivação PBKDF2 de 600.000 iterações para arquivos de configuração e arquivo do projeto; `core/sync_manager.py` também oferece sincronização cifrada.
+- `main.py` tem 1.920 linhas no checkout verificado nesta atualização. As contagens menores abaixo são marcos históricos, não o tamanho atual.
 
 ## Problemas ainda conhecidos
 
@@ -37,12 +42,16 @@
 - `main.py` concentra sessão Live, áudio, tools, visão, reconexão, memória e watchdog; o estado de tasks e painel fica em `core/background_tasks.py`.
 - O tamanho atual da orchestrator não é um problema por si só, mas é um sinal de acoplamento; a estratégia atual é decompor em blocos pequenos e testados sem mexer em áudio ou em lógica crítica.
 - Meta de manutenção: manter a orquestração principal em faixa de 600-900 linhas, e mover helpers de áudio, visão, tools e monitoramento para módulos específicos conforme a decomposição continuar.
-- A rodada atual de refatoração controlada foi concluída com `main.py` em 2.433 linhas; o lifecycle ficou mais organizado, mas a meta de 600-900 linhas ainda exige uma fase posterior de extração para módulos próprios.
-- A fase modular posterior começou com `core/async_tool_runner.py`, que agora concentra os dois wrappers de timeout de tools; `main.py` preserva os aliases internos e ficou com 2.417 linhas. Suíte atual: 30 testes passando.
+### Marcos históricos de refatoração
+
+As contagens abaixo são da época, não representam o tamanho atual de `main.py`.
+
+- A rodada inicial de refatoração controlada foi concluída com `main.py` em 2.433 linhas; o lifecycle ficou mais organizado, mas a meta de 600-900 linhas ainda exige extrações posteriores.
+- A fase modular posterior começou com `core/async_tool_runner.py`, que concentra os dois wrappers de timeout de tools; naquele marco `main.py` tinha 2.417 linhas e a suíte dessa etapa tinha 30 testes.
 - O bloco estático `TOOL_DECLARATIONS` foi extraído integralmente para `core/tool_declarations.py`; as 27 tools foram preservadas na mesma ordem. `main.py` ficou com 1.883 linhas e o novo módulo com 535 linhas. Áudio, UI e conexão Gemini não foram alterados.
-- As constantes puras de runtime foram extraídas para `core/runtime_constants.py`: timezone, fallbacks Live, cache e parâmetros de áudio. Valores foram validados, `main.py` ficou com 1.875 linhas e a suíte permaneceu com 75 testes passando. Caminhos e leitura de configuração continuam no `main.py` por participarem do boot.
-- O I/O de configuração foi extraído para `core/runtime_config.py`, mantendo wrappers compatíveis no `main.py`. API key, prompt fallback, leitura JSON e escrita atômica do cache foram cobertos por testes; suíte atual: 75 testes passando. `main.py` ficou com 1.860 linhas.
-- Fase 2 iniciada: `core/knowledge_vault.py` usa `D:\MEMORIA_JARVIS` como raiz do Vault Obsidian e busca arquivos `.md` recursivamente. Leitura real encontrou `Memoria_Jarvis/Bem-vindo`; suíte atual: 75 testes passando. Nenhuma alteração foi feita em áudio, UI ou Gemini Live.
+- As constantes puras de runtime foram extraídas para `core/runtime_constants.py`: timezone, fallbacks Live, cache e parâmetros de áudio. Naquele marco `main.py` tinha 1.875 linhas e a suíte da etapa tinha 75 testes. Caminhos e leitura de configuração continuaram no `main.py` por participarem do boot.
+- O I/O de configuração foi extraído para `core/runtime_config.py`, mantendo wrappers compatíveis no `main.py`; API key, prompt fallback, leitura JSON e escrita atômica do cache foram cobertos por testes. Naquele marco `main.py` tinha 1.860 linhas e a suíte tinha 75 testes.
+- Na etapa inicial da Fase 2, `core/knowledge_vault.py` usava `D:\MEMORIA_JARVIS` como raiz e buscava `.md` recursivamente; o caminho passou depois a ser configurável por `vault_path`. Naquela etapa, a leitura encontrou `Memoria_Jarvis/Bem-vindo` e a suíte tinha 75 testes.
 - A baseline formal ainda é uma amostra controlada de 6 turnos, não uma promessa estatística de 30-50 turnos; nenhuma troca de provider, buffer ou timeout de voz foi feita com base em especulação.
 - Métricas atualmente são emitidas no terminal, não persistidas nem agregadas; a coleta real de 30-50 turnos ainda está pendente.
 - Baseline atual validado: 6 turnos reais coletados no terminal, com amostra variada (web_search, análise de código, visão e interrupção).
@@ -143,11 +152,11 @@ Free tier não significa SLA, disponibilidade contínua ou latência constante.
 - A memória local foi integrada com política de decisão em quatro estados: automatic, suggested, explicit e ignore.
 - O contexto local do computador e do projeto foi resolvido com busca segura, sem expor caminhos absolutos ao usuário.
 - O `dev_agent` atua em revisão e mentoria guiada, sem autoalteração irrestrita.
-- O sistema foi validado com 78 testes passando, confirmando a estabilidade da linha atual.
+- A última validação de testes registrada foi de 78 testes passando; esse resultado é histórico e não foi reexecutado nesta atualização documental.
 - O modelo de plugins foi fechado em opt-in: qualquer plugin desconhecido ou de terceiro nasce desligado até habilitação explícita, evitando ativação silenciosa por descoberta automática.
 - A experiência de uso do assistente foi refinada para reduzir ruído de confirmação: ações não destrutivas seguem fluxo direto e só exclusão exige consentimento local.
-- A Fase 4 foi concluída com `BackgroundTaskTracker`; a suíte principal permanece verde com 78 testes.
-- A Fase 5 foi concluída com WikiLinks, backlinks e indexação do vault; a suíte completa permanece verde com 78 testes.
+- A Fase 4 foi concluída com `BackgroundTaskTracker`; a última validação de então registrou 78 testes passando.
+- A Fase 5 foi concluída com WikiLinks, backlinks e indexação do vault; a última validação de então registrou 78 testes passando.
 
 ## Roadmap de refatoração aprovado
 
@@ -174,4 +183,4 @@ Decisão de custo consolidada: o canal de voz (Gemini Live) fica no tier gratuit
 
 Problemas conhecidos que SAÍRAM da lista: watchdog nunca reconectando, ferramentas travando o áudio, teclado fantasma no open_app, resposta duplicada/repetitiva, memória desconectada do vault, microfone sempre ativo consumindo cota à toa.
 
-Problemas que PERMANECEM: instabilidade ocasional do lado do servidor do Gemini (erro 1011, fora do nosso controle), transcrição de log picotada (não confirmado se afeta o entendimento real do comando), Vertex AI Express Mode ainda não testado como via gratuita pra voz.
+Problemas que PERMANECEM: instabilidade ocasional do lado do servidor do Gemini (erro 1011, fora do nosso controle); a junção dos fragmentos de transcrição nos logs já foi corrigida em `_join_transcript`, mas o diagnóstico temporário `[Transcript]` ainda está no código e a qualidade do reconhecimento de fala não foi validada de ponta a ponta; Vertex AI Express Mode ainda não foi testado como via gratuita pra voz.

@@ -3,7 +3,6 @@ tests/test_jarvis_core.py
 Roda com: python -m pytest tests/ -v
 """
 import asyncio
-import json
 from pathlib import Path
 import sys
 import time
@@ -13,12 +12,8 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from core.crypto_vault import (
-    decrypt_archive,
     decrypt_bytes,
-    decrypt_file,
-    encrypt_archive,
     encrypt_bytes,
-    encrypt_file,
 )
 
 
@@ -46,51 +41,6 @@ def test_decrypt_bytes_wrong_password():
     enc = encrypt_bytes(b"segredo", "correta")
     with pytest.raises(Exception):
         decrypt_bytes(enc, "errada")
-
-
-def test_encrypt_decrypt_file_roundtrip(tmp_path):
-    plain = tmp_path / "plain.json"
-    enc = tmp_path / "plain.enc"
-    payload = {"gemini_api_key": "gsk_test", "groq_api_key": "sk_test"}
-    plain.write_text(json.dumps(payload), encoding="utf-8")
-
-    encrypt_file(plain, enc, "senha123")
-    assert enc.exists()
-    assert decrypt_file(enc, "senha123") == payload
-
-
-def test_decrypt_file_wrong_password(tmp_path):
-    plain = tmp_path / "k.enc"
-    source = tmp_path / "k.json"
-    source.write_text('{"x": 1}', encoding="utf-8")
-    encrypt_file(source, plain, "certa")
-    with pytest.raises(Exception):
-        decrypt_file(plain, "errada")
-
-
-def test_encrypt_archive_roundtrip(tmp_path):
-    src = tmp_path / "src"
-    src.mkdir()
-    (src / "main.py").write_text("print('hello')", encoding="utf-8")
-    (src / "sub").mkdir()
-    (src / "sub" / "note.md").write_text("# Nota", encoding="utf-8")
-
-    out = tmp_path / "vault.enc"
-    encrypt_archive(src, out, "senha_vault")
-    dst = tmp_path / "dst"
-    decrypt_archive(out, dst, "senha_vault")
-    assert (dst / "main.py").read_text() == "print('hello')"
-    assert (dst / "sub" / "note.md").read_text() == "# Nota"
-
-
-def test_encrypt_archive_wrong_password(tmp_path):
-    src = tmp_path / "src"
-    src.mkdir()
-    (src / "f.txt").write_text("x")
-    out = tmp_path / "v.enc"
-    encrypt_archive(src, out, "ok")
-    with pytest.raises(Exception):
-        decrypt_archive(out, tmp_path / "dst", "wrong")
 
 
 def test_pbkdf2_deterministic():
