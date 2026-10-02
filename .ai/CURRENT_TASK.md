@@ -170,6 +170,9 @@ A linha de produto atual está pronta para uso seguro e validado. O próximo ava
 
 ## Fase 8 — Wake word (fecha o plano)
 - [x] 8A: wake word configurável (wake_word_model, wake_word_threshold, wake_word_grace_sec, wake_word_buffer_sec, wake_word_vad), estado visível no painel, tools/wake_eval.py, "confirma" aceito no portão de voz
-- [ ] 8B: gravar amostras (pos / pos_hey / neg / ambient), medir o hey_jarvis atual, decidir entre ajustar limiar ou treinar modelo próprio e treinar
-- [ ] 8C: apontar wake_word_model para o .onnx e ligar wake_word_enabled: true
-- [ ] 8D: validar 3 dias de uso real (≥ 90% de acerto, ≤ 1 falso/hora)
+- [x] 8B: gravar amostras (pos / pos_hey / neg / ambient), medir o hey_jarvis atual, decidir entre ajustar limiar ou treinar modelo próprio e treinar
+- [x] 8C: apontar wake_word_model para o .onnx e ligar wake_word_enabled: true
+- [ ] 8D: validar 3 dias de uso real (em andamento)
+- Modelo: models/wake/jarvis.onnx (treinado em D:\WakeTrain com o nibor1896/custom-wakeword-trainer, commit 7cadc33; 25.000 passos em CPU, 8 min 33 s; ACAV usado). Limiar 0.5.
+- Prova independente (wake_samples, 30 clipes "Jarvis", 30 de fala normal, 10 min de ambiente): acerto 83%, 1 falso em 30 falas normais, 0 falsos/hora no ambiente. Aceito pelo Senhor até segunda ordem.
+- Critério da 8D: ≤ 2 acordadas falsas em 3 dias e < 1 falha a cada 10 chamadas; senão, retreinar (gravar mais positivos lentos/baixos, sem apagar nada em D:\WakeTrain\trainer\data).
