@@ -29,6 +29,7 @@ class ToolSpec:
     func: Callable[..., Any]
     declaration: dict[str, Any] | None = None
     kind: str = "simple"
+    timeout: float | None = None
 
 
 _REGISTRY: dict[str, ToolSpec] = {}
@@ -36,9 +37,21 @@ _SIMPLE_TOOL_NAMES: set[str] = set()
 _ADVANCED_TOOL_NAMES: set[str] = set()
 
 
-def register_tool(name: str, *, declaration: dict[str, Any] | None = None, kind: str = "simple"):
+def register_tool(
+    name: str,
+    *,
+    declaration: dict[str, Any] | None = None,
+    kind: str = "simple",
+    timeout: float | None = None,
+):
     def _decorator(func: Callable[..., Any]):
-        _REGISTRY[name] = ToolSpec(name=name, func=func, declaration=declaration, kind=kind)
+        _REGISTRY[name] = ToolSpec(
+            name=name,
+            func=func,
+            declaration=declaration,
+            kind=kind,
+            timeout=timeout,
+        )
         if kind == "simple":
             _SIMPLE_TOOL_NAMES.add(name)
         else:
@@ -240,6 +253,111 @@ async def _deep_reasoning_tool(args: dict, *, jarvis=None, loop=None, **_extra):
         return f"deep_reasoning falhou, Senhor: {e}"
 
 
+@register_tool("save_memory", declaration=_decl("save_memory"), kind="advanced")
+def _save_memory_tool(args: dict, *, jarvis=None, **_extra):
+    category = args.get("category", "notes")
+    key = args.get("key", "")
+    value = args.get("value", "")
+    user_confirmed = bool(args.get("user_confirmed", False))
+    if not (key and value):
+        return {"result": "ok", "silent": True}
+
+    from core.memory_policy import classify_memory, persist_memory_proposal
+
+    proposal = classify_memory(value, project="JARVIS", origin="tool")
+    proposal.category = category
+    proposal.key = key
+
+    if proposal.mode == "ignore":
+        return {
+            "result": "Memória sensível rejeitada: não será salva no vault.",
+            "silent": True,
+        }
+    if proposal.mode == "suggested" and not user_confirmed:
+        return {
+            "result": "Memória sugerida: confirmar gravação antes de salvar no vault.",
+            "silent": True,
+        }
+
+    persist_memory_proposal(
+        proposal,
+        confirmed=user_confirmed or proposal.mode in {"automatic", "explicit"},
+    )
+    return {"result": "ok", "silent": True}
+
+
+@register_tool("shutdown_jarvis", declaration=_decl("shutdown_jarvis"), kind="advanced")
+def _shutdown_jarvis_tool(args: dict, *, jarvis=None, player=None, **_extra):
+    def _run_shutdown() -> str:
+        async def _do_shutdown():
+            from core.session_lifecycle import save_session_summary
+
+            await save_session_summary(jarvis)
+            try:
+                await jarvis._safe_send_content(
+                    [{"text": "Say a brief natural goodbye to the user."}]
+                )
+            except Exception:
+                pass
+            await asyncio.sleep(1.5)
+            import os as _os
+
+            _os._exit(0)
+
+        asyncio.run_coroutine_threadsafe(_do_shutdown(), jarvis._loop)
+        return "Encerrando."
+
+    return write_guard.request_confirmation(
+        key="shutdown_jarvis",
+        summary="desligar o J.A.R.V.I.S. por completo (encerra o programa)",
+        run=_run_shutdown,
+        player=player,
+        audit=("shutdown_jarvis", "assistant"),
+        silent_result=True,
+    )
+
+
+@register_tool("find_context", declaration=_decl("find_context"), kind="simple")
+def _find_context_tool(args: dict, **_extra):
+    from core.context_resolver import resolve_context
+
+    query = str(args.get("query", "")).strip()
+    if not query:
+        return {
+            "result": "Consulta vazia para contexto local.",
+            "needs_confirmation": False,
+        }
+    roots = [root for root in (args.get("roots") or []) if isinstance(root, str)]
+    max_results = int(args.get("max_results", 5) or 5)
+    return {
+        "result": resolve_context(query, roots=roots or None, max_results=max_results)
+    }
+
+
+@register_tool(
+    "knowledge_note",
+    declaration=_decl("knowledge_note"),
+    kind="advanced",
+    timeout=10.0,
+)
+def _knowledge_note_tool(args: dict, **_extra):
+    from core.knowledge_vault import list_notes, read_note, search_notes, write_note
+
+    action = args.get("action", "read")
+    if action == "write":
+        return write_note(args.get("name", ""), args.get("content", ""))
+    if action == "append":
+        return write_note(args.get("name", ""), args.get("content", ""), append=True)
+    if action == "read":
+        return read_note(args.get("name", ""))
+    if action == "list":
+        notes = list_notes()
+        return ("Notas: " + ", ".join(notes)) if notes else "Nenhuma nota ainda."
+    if action == "search":
+        return search_notes(args.get("query", ""))
+    return f"Ação desconhecida: {action}"
+
+
 def get_declarations() -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = list(TOOL_DECLARATIONS)
     seen = {item.get("name") for item in items if item.get("name")}
@@ -259,6 +377,7 @@ def get_declarations() -> list[dict[str, Any]]:
 
 
 async def dispatch_tool(name: str, args: dict, *, loop, jarvis=None, kind: str | None = None) -> Any | None:
+    """Dispatches tools whose functions may return a string or a structured dict."""
     spec = _REGISTRY.get(name)
     if spec is None:
         return None
@@ -270,51 +389,52 @@ async def dispatch_tool(name: str, args: dict, *, loop, jarvis=None, kind: str |
     speak = getattr(jarvis, "speak", None) if jarvis else None
     session_memory = getattr(jarvis, "session_memory", None) if jarvis else None
 
-    try:
+    async def _invoke(**kwargs):
         if inspect.iscoroutinefunction(spec.func):
-            result = spec.func(
-                args,
-                player=player,
-                session_memory=session_memory,
-                speak=speak,
-                jarvis=jarvis,
-                loop=loop,
-            )
-            return await result
+            return await spec.func(args, **kwargs)
         result = await loop.run_in_executor(
-            None,
-            lambda: spec.func(
-                args,
-                player=player,
-                session_memory=session_memory,
-                speak=speak,
-                jarvis=jarvis,
-                loop=loop,
-            ),
+            None, lambda: spec.func(args, **kwargs)
         )
         if asyncio.iscoroutine(result):
             return await result
         return result
+
+    async def _invoke_with_timeout(**kwargs):
+        invocation = _invoke(**kwargs)
+        if spec.timeout is None:
+            return await invocation
+        return await asyncio.wait_for(invocation, timeout=spec.timeout)
+
+    try:
+        return await _invoke_with_timeout(
+            player=player,
+            session_memory=session_memory,
+            speak=speak,
+            jarvis=jarvis,
+            loop=loop,
+        )
+    except asyncio.TimeoutError as _e:
+        if spec.timeout is None:
+            import traceback as _tb
+
+            print(f"[tool_registry] ❌ {name} falhou: {_e}")
+            _tb.print_exc()
+            return f"Erro interno ao executar {name}, Senhor: {_e}"
+        return f"{name} excedeu {spec.timeout:.0f}s; o resultado não será aguardado, Senhor."
     except TypeError:
         try:
-            if inspect.iscoroutinefunction(spec.func):
-                result = spec.func(
-                    args,
-                    player=player,
-                    session_memory=session_memory,
-                )
-                return await result
-            result = await loop.run_in_executor(
-                None,
-                lambda: spec.func(
-                    args,
-                    player=player,
-                    session_memory=session_memory,
-                ),
+            return await _invoke_with_timeout(
+                player=player,
+                session_memory=session_memory,
             )
-            if asyncio.iscoroutine(result):
-                return await result
-            return result
+        except asyncio.TimeoutError as _e:
+            if spec.timeout is None:
+                import traceback as _tb
+
+                print(f"[tool_registry] ❌ {name} falhou (fallback de assinatura): {_e}")
+                _tb.print_exc()
+                return f"Erro interno ao executar {name}, Senhor: {_e}"
+            return f"{name} excedeu {spec.timeout:.0f}s; o resultado não será aguardado, Senhor."
         except Exception as _e:
             import traceback as _tb
             print(f"[tool_registry] ❌ {name} falhou (fallback de assinatura): {_e}")

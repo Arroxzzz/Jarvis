@@ -1,34 +1,6 @@
-import platform as _platform
-import subprocess as _subprocess
-import sys as _sys
+import core.platform_bootstrap  # noqa: F401 — aplica patches de processo antes de qualquer outro import
+
 import random
-
-# ── Make stdout/stderr UTF-8 tolerant ────────────────────────────────────────
-# On non-UTF-8 Windows consoles (cp1254/cp1252/cp936...) any print() containing
-# an emoji raises UnicodeEncodeError.  Several of those prints sit inside except
-# handlers, so the handler itself would blow up and skip the recovery code that
-# follows it — turning a recoverable error into a silent hang.  errors="replace"
-# makes every print safe.
-for _stream in (_sys.stdout, _sys.stderr):
-    try:
-        _stream.reconfigure(encoding="utf-8", errors="replace")
-    except Exception:
-        pass   # frozen builds may have no real stream attached
-
-# ── Nuclear: force CREATE_NO_WINDOW on EVERY subprocess call on Windows ───────
-# This patches Popen itself, so no per-file flag is needed anywhere.
-if _platform.system() == "Windows":
-    _OrigPopen = _subprocess.Popen
-
-    class _Popen(_OrigPopen):
-        def __init__(self, args, **kw):
-            kw["creationflags"] = kw.get("creationflags", 0) | _subprocess.CREATE_NO_WINDOW
-            kw.pop("startupinfo", None)   # drop any stale/shared STARTUPINFO
-            super().__init__(args, **                       kw)
-
-    _subprocess.Popen = _Popen
-
-# ─────────────────────────────────────────────────────────────────────────────
 
 import asyncio
 import logging.handlers
@@ -36,10 +8,10 @@ import re
 import threading
 import time
 import json
-import sys
 import traceback
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 import sounddevice as sd
 from google import genai
@@ -59,19 +31,19 @@ from actions.code_helper       import code_helper
 from actions.dev_agent         import dev_agent
 from actions.web_search        import web_search as web_search_action
 from actions.computer_control  import computer_control
-from actions.system_monitor    import SystemMonitor, get_system_status
+from actions.system_monitor    import SystemMonitor
 from actions.proactive         import ProactiveEngine
-from actions.background_monitor import (
-    add_monitor, remove_monitor, list_monitors, check_all as monitor_check_all,
-)
 from core.plugin_loader        import discover_plugins
-from core.llm_client           import call_llm_text, gemini_call_resilient
-from core.async_tool_runner    import run_bounded as _bounded
+from core.llm_client           import call_llm_text
 from core.async_tool_runner    import run_tool_bound as _run_tool_bound
-from core import context_index
 from core import write_guard
-from core.hw_sensors import get_idle_seconds, is_foreground_fullscreen
-from core.paths import humanize_for_speech
+from core.paths import get_base_dir, humanize_for_speech
+from core.transcript_utils import (
+    _clean_transcript,  # noqa: F401 — reexportação para consumidores legados
+    _join_transcript,  # noqa: F401 — reexportação para consumidores legados
+    _should_close_wake_gate,  # noqa: F401 — reexportação para consumidores legados
+    _watchdog_should_reconnect,  # noqa: F401 — reexportação para consumidores legados
+)
 from core.background_tasks     import BackgroundTaskTracker
 from core.runtime_constants    import (
     TZ_BR as _TZ_BR,
@@ -89,11 +61,18 @@ from core.runtime_config       import (
     read_config as _read_config_file,
     write_config_key as _write_config_key_file,
 )
-
-def get_base_dir():
-    if getattr(sys, "frozen", False):
-        return Path(sys.executable).parent
-    return Path(__file__).resolve().parent
+from core.live_model_resolver import (
+    LiveModelResolver,
+    _validate_gemini_key,
+)
+from core.session_prompt import build_system_instruction
+from core.reconnect_policy import (
+    is_feature_rejection,
+    is_invalid_api_key,
+    is_model_rejection,
+    is_network_error,
+)
+from core import session_lifecycle, session_loops
 
 BASE_DIR        = get_base_dir()
 API_CONFIG_PATH = BASE_DIR / "config" / "api_keys.json"
@@ -128,90 +107,11 @@ def _write_config_key(key: str, value) -> None:
         print(f"[JARVIS] ⚠️ Config write failed ({key}): {e}")
 
 
-def _discover_live_models(api_key: str) -> list[str]:
-    """
-    Consulta client.models.list() e retorna todos os model IDs que suportam
-    bidiGenerateContent (Live API), ordenados com preferência por 'flash'/'live'
-    no nome. Retorna [] em qualquer falha — NUNCA levanta exceção.
-    """
-    found: list[str] = []
-    try:
-        client = genai.Client(api_key=api_key, http_options={"api_version": "v1beta"})
-        for m in client.models.list():
-            name = getattr(m, "name", "") or ""
-            actions = (
-                getattr(m, "supported_actions", None)
-                or getattr(m, "supported_generation_methods", None)
-                or []
-            )
-            actions_str = " ".join(str(a) for a in actions).lower()
-            if "bidigeneratecontent" in actions_str:
-                # translate/transcribe são modelos Live especializados, não
-                # modelos de diálogo de voz completo.
-                lname = name.lower()
-                if "translate" in lname or "transcribe" in lname:
-                    continue
-                found.append(name)
-
-        def _rank(n: str) -> tuple:
-            lname = n.lower()
-            return (
-                0 if "native-audio" in lname else 1,
-                0 if "live" in lname else 1,
-                "exp" in lname,
-                n,
-            )
-
-        found.sort(key=_rank)
-        if found:
-            print(f"[JARVIS] 🔍 Live models descobertos: {found}")
-    except Exception as e:
-        print(f"[JARVIS] ⚠️ Descoberta de modelos Live falhou: {e}")
-    return found
-
-
-_CTRL_RE = re.compile(r"<ctrl\d+>", re.IGNORECASE)
-
 _Cancel_PHRASES = [
     "Processos interrompidos, Senhor. Errou alguma coisa?",
     "Interrompido, Senhor. Falei demais?",
     "Cancelado, Senhor. Como deseja prosseguir?",
 ]
-
-
-def _validate_gemini_key(api_key: str) -> bool:
-    """Ping REST leve com modelo padrão (NÃO o Live model) — só retorna False
-    para erro de chave real; qualquer outro erro (rede, quota) não bloqueia boot."""
-    try:
-        client = genai.Client(api_key=api_key)
-        client.models.generate_content(model="gemini-2.0-flash", contents="ping")
-        return True
-    except Exception as e:
-        msg = str(e)
-        if "API key not valid" in msg or "API_KEY_INVALID" in msg:
-            return False
-        return True  # erro não relacionado à chave — não bloquear
-
-
-def _clean_transcript(text: str) -> str:
-    text = _CTRL_RE.sub("", text)
-    return re.sub(r"[\x00-\x08\x0b-\x1f]", "", text)
-
-
-def _join_transcript(parts: list[str]) -> str:
-    """Concatena fragmentos de transcrição sem inserir espaços entre palavras."""
-    return " ".join("".join(parts).split())
-
-
-def _should_close_wake_gate(was_speaking: bool, server_turn_done: bool) -> bool:
-    """Fecha o gate só na transição de fala para silêncio após o turno do servidor."""
-    return was_speaking and server_turn_done
-
-
-def _watchdog_should_reconnect(awaiting_response: bool, last_activity: float,
-                               now: float, timeout: float = 20.0) -> bool:
-    """Indica se uma resposta pendente excedeu o timeout."""
-    return awaiting_response and (now - last_activity) > timeout
 
 
 from core.tool_declarations import TOOL_DECLARATIONS
@@ -270,8 +170,12 @@ class JarvisLive:
         self._awaiting_response: bool = False   # True entre o início da fala/texto do Senhor e a 1ª resposta
         self._tasks = BackgroundTaskTracker()
         self._enhanced_live = True  # affective dialog + proactive audio; auto-disabled if the server rejects them
-        self._live_candidates: list[str] = []   # preenchido em _resolve_live_model()
-        self._live_idx = 0                      # índice do candidato atual em uso
+        self._model_resolver = LiveModelResolver(
+            ui=self.ui,
+            get_config=_read_config,
+            fallbacks=LIVE_MODEL_FALLBACKS,
+            cache_key=_LIVE_MODEL_CACHE_KEY,
+        )
         _core_names = {t["name"] for t in TOOL_DECLARATIONS}
         self._plugin_registry = discover_plugins(
             plugins_dir=Path(__file__).resolve().parent / "plugins",
@@ -318,10 +222,6 @@ class JarvisLive:
         out_len = out_q.qsize() if out_q is not None else 0
         underrun = (in_len == 0 and side == "play") or (out_len == 0 and side == "send")
         return {"side": side, "in_q": in_len, "out_q": out_len, "underrun": int(underrun)}
-
-    async def _bounded(self, loop, fn, timeout: float, label: str) -> str:
-        """Wrapper de timeout centralizado para manter a API consistente em toda a classe."""
-        return await _bounded(loop, fn, timeout, label)
 
     async def _safe_send_content(self, parts: list, turn_complete: bool = True) -> None:
         """Serializa envios de conteúdo para evitar chamadas concorrentes na sessão Live."""
@@ -588,34 +488,6 @@ class JarvisLive:
         sys_prompt = _load_system_prompt()
 
         now      = datetime.now(_TZ_BR)
-        time_str = now.strftime("%A, %d de %B de %Y — %H:%M")
-        time_ctx = (
-            f"[CURRENT DATE & TIME]\n"
-            f"Right now it is: {time_str} (horário de Brasília, BRT, UTC-3).\n"
-            f"ALWAYS report time in BRT — NEVER say UTC or any other timezone.\n"
-            f"Use this to calculate exact times for reminders.\n\n"
-        )
-
-        # Sempre "Senhor" — nunca adicionar o nome, soa mais natural e menos robótico
-        _addr = (
-            "ADDRESS: Sempre trate o usuário como 'Senhor'. "
-            "Nunca use 'Senhor Paulo', nunca 'sir', nunca 'efendim'."
-        )
-        identity_ctx = (
-            f"[IDENTITY]\n"
-            f"Seu nome é {self._asst_name}. Você foi criado por Senhor Paulo "
-            f"e existe para servi-lo com lealdade absoluta — não é um produto "
-            f"genérico, é a criação pessoal dele.\n"
-            f"{_addr}\n\n"
-        )
-
-        parts = [time_ctx, identity_ctx]
-        if mem_str:
-            parts.append(mem_str)
-        if vault_digest:
-            parts.append(vault_digest)
-        parts.append(sys_prompt)
-
         cfg = dict(
             response_modalities=["AUDIO"],
             thinking_config=types.ThinkingConfig(
@@ -632,7 +504,9 @@ class JarvisLive:
                     silence_duration_ms=700,
                 ),
             ),
-            system_instruction="\n".join(parts),
+            system_instruction=build_system_instruction(
+                self._asst_name, mem_str, vault_digest, sys_prompt, now
+            ),
             tools=[{"function_declarations": get_declarations() + self._plugin_registry.get_tool_declarations()}],
             session_resumption=types.SessionResumptionConfig(handle=self._resumption_handle),
             # Sliding-window compression: session never dies from a full context
@@ -699,18 +573,18 @@ class JarvisLive:
             self._vision_busy = False
             return f"Falha ao capturar {args.get('angle', 'screen')}, Senhor: {e}"
 
-    async def _handle_simple_tool_route(self, name: str, args: dict, loop) -> str | None:
+    async def _handle_simple_tool_route(self, name: str, args: dict, loop) -> Any | None:
         """Centralizes simple, time-bounded tools that can be run under a single helper."""
         registry_result = await dispatch_tool(name, args, loop=loop, jarvis=self, kind="simple")
         if registry_result is not None:
-            return str(registry_result)
+            return registry_result
         return None
 
-    async def _handle_advanced_tool_route(self, name: str, args: dict, loop) -> str:
+    async def _handle_advanced_tool_route(self, name: str, args: dict, loop) -> Any:
         """Roteia ferramentas mais complexas para manter _execute_tool_impl menor e mais legível."""
         registry_result = await dispatch_tool(name, args, loop=loop, jarvis=self, kind="advanced")
         if registry_result is not None:
-            return str(registry_result)
+            return registry_result
 
         if name == "screen_process":
             return await self._handle_screen_process(args, loop)
@@ -736,133 +610,6 @@ class JarvisLive:
         print(f"[JARVIS] 🔧 {name}  {args}")
         self.ui.set_state("THINKING")
 
-        if name == "find_context":
-            from core.context_resolver import resolve_context
-
-            query = str(args.get("query", "")).strip()
-            roots = args.get("roots") or []
-            max_results = int(args.get("max_results", 5) or 5)
-            if not query:
-                return types.FunctionResponse(
-                    id=fc.id, name=name,
-                    response={"result": "Consulta vazia para contexto local.", "needs_confirmation": False}
-                )
-
-            safe_roots = []
-            if roots:
-                for root in roots:
-                    if isinstance(root, str):
-                        safe_roots.append(root)
-            result = resolve_context(query, roots=safe_roots or None, max_results=max_results)
-
-            if not self.ui.muted:
-                self.ui.set_state("LISTENING")
-            return types.FunctionResponse(
-                id=fc.id, name=name,
-                response={"result": result}
-            )
-
-        if name == "save_memory":
-            category = args.get("category", "notes")
-            key = args.get("key", "")
-            value = args.get("value", "")
-            user_confirmed = bool(args.get("user_confirmed", False))
-
-            if key and value:
-                from core.memory_policy import classify_memory, persist_memory_proposal
-
-                proposal = classify_memory(value, project="JARVIS", origin="tool")
-                proposal.category = category
-                proposal.key = key
-                if proposal.mode == "ignore":
-                    print(f"[Memory] 🚫 save_memory rejected: {category}/{key}")
-                    if not self.ui.muted:
-                        self.ui.set_state("LISTENING")
-                    return types.FunctionResponse(
-                        id=fc.id, name=name,
-                        response={"result": "Memória sensível rejeitada: não será salva no vault.", "silent": True}
-                    )
-
-                if proposal.mode == "suggested" and not user_confirmed:
-                    print(f"[Memory] ⏳ save_memory waiting for confirmation: {category}/{key}")
-                    if not self.ui.muted:
-                        self.ui.set_state("LISTENING")
-                    return types.FunctionResponse(
-                        id=fc.id, name=name,
-                        response={"result": "Memória sugerida: confirmar gravação antes de salvar no vault.", "silent": True}
-                    )
-
-                outcome = persist_memory_proposal(
-                    proposal,
-                    confirmed=user_confirmed or proposal.mode in {"automatic", "explicit"},
-                )
-                if outcome.get("saved"):
-                    print(f"[Memory] 💾 save_memory: {category}/{key} = {value}")
-                else:
-                    print(f"[Memory] ⚠ save_memory blocked: {outcome.get('reason')}")
-
-            if not self.ui.muted:
-                self.ui.set_state("LISTENING")
-            return types.FunctionResponse(
-                id=fc.id, name=name,
-                response={"result": "ok", "silent": True}
-            )
-
-        if name == "knowledge_note":
-            from core.knowledge_vault import write_note, read_note, list_notes, search_notes
-
-            def _run_knowledge():
-                action = args.get("action", "read")
-                if action == "write":
-                    return write_note(args.get("name", ""), args.get("content", ""))
-                if action == "append":
-                    return write_note(args.get("name", ""), args.get("content", ""), append=True)
-                if action == "read":
-                    return read_note(args.get("name", ""))
-                if action == "list":
-                    notes = list_notes()
-                    return ("Notas: " + ", ".join(notes)) if notes else "Nenhuma nota ainda."
-                if action == "search":
-                    return search_notes(args.get("query", ""))
-                return f"Ação desconhecida: {action}"
-
-            try:
-                result = await self._bounded(
-                    asyncio.get_event_loop(), _run_knowledge, 10, "knowledge_note"
-                )
-            except Exception as e:
-                result = f"Erro no vault de conhecimento: {e}"
-            if not self.ui.muted:
-                self.ui.set_state("LISTENING")
-            return types.FunctionResponse(
-                id=fc.id, name=name,
-                response={"result": result}
-            )
-
-        if name == "shutdown_jarvis":
-            def _run_shutdown() -> str:
-                async def _do_shutdown():
-                    await self._save_session_summary()
-                    try:
-                        await self._safe_send_content([{"text": "Say a brief natural goodbye to the user."}])
-                    except Exception:
-                        pass
-                    await asyncio.sleep(1.5)
-                    import os as _os
-                    _os._exit(0)
-                asyncio.run_coroutine_threadsafe(_do_shutdown(), self._loop)
-                return "Encerrando."
-
-            result = write_guard.request_confirmation(
-                key="shutdown_jarvis",
-                summary="desligar o J.A.R.V.I.S. por completo (encerra o programa)",
-                run=_run_shutdown,
-                player=self.ui,
-                audit=("shutdown_jarvis", "assistant"),
-                silent_result=True,
-            )
-            return types.FunctionResponse(id=fc.id, name=name, response={"result": result})
-
         loop   = asyncio.get_event_loop()
         result = "Done."
 
@@ -882,9 +629,10 @@ class JarvisLive:
             self.ui.set_state("LISTENING")
 
         print(f"[JARVIS] 📤 {name} → {str(result)[:80]}")
+        response_payload = result if isinstance(result, dict) else {"result": result}
         return types.FunctionResponse(
             id=fc.id, name=name,
-            response={"result": result}
+            response=response_payload
         )
 
     async def _send_realtime(self):
@@ -1080,7 +828,7 @@ class JarvisLive:
                                 audio_chunks=self._turn_audio,
                                 tools=self._turn_tools,
                                 gaps=self._audio_gaps,
-                                model=self._current_live_model(),
+                                model=self._model_resolver.current(),
                                 interrupted=self._interrupted,
                                 heard_late=self._heard_late,
                                 heard=repr(_join_transcript(in_buf)[:60]),
@@ -1278,190 +1026,6 @@ class JarvisLive:
             stream.stop()
             stream.close()
 
-    async def _send_boot_greeting(self) -> None:
-        """Saudação mínima no boot. Sempre em 1ª pessoa e SEM citar o próprio nome."""
-        await asyncio.sleep(0.3)
-        if not self.session:
-            return
-        last = await asyncio.to_thread(memory_store.pop_last_session)
-        style = "Em PT-BR, em primeira pessoa, SEM dizer o seu próprio nome e sem a palavra 'online'."
-        if last:
-            try:
-                delta = (datetime.now(_TZ_BR).date() - datetime.strptime(last["date"], "%Y-%m-%d").date()).days
-                when = "hoje mais cedo" if delta == 0 else ("ontem" if delta == 1 else f"há {delta} dias")
-            except Exception:
-                when = "da última vez"
-            prompt = (
-                f"{style} Faça uma saudação de até 4 palavras (ex.: 'Às ordens, Senhor.') e, em seguida, "
-                f"uma frase curta lembrando que {when}: {last['summary']} Máximo 25 palavras no total."
-            )
-        elif __import__("os").environ.get("JARVIS_NEW_ENVIRONMENT") == "1":
-            prompt = (
-                f"{style} Note em uma frase que estamos em um ambiente diferente do habitual (outra máquina) "
-                "e pergunte como o Senhor quer chamar este local. Máximo 2 frases curtas."
-            )
-        else:
-            prompt = (
-                f"{style} Faça UMA saudação de até 5 palavras informando que está pronto "
-                "(ex.: 'Às ordens, Senhor.' ou 'Pronto, Senhor.')."
-            )
-        try:
-            await self._safe_send_content([{"text": prompt}])
-        except Exception as e:
-            print(f"[Boot] Greeting failed: {e}")
-
-    # ── Session memory ──────────────────────────────────────────────────────────
-
-    async def _save_session_summary(self) -> None:
-        """Summarise the current session in 1-2 sentences and append it to Sessoes.md."""
-        log = self._session_log
-        if len(log) < 3:          # need at least one exchange to be worth saving
-            return
-        self._session_log = []    # reset immediately so the next session starts clean
-
-        lang = memory_store.read_facts("identity").get("language", "").strip()
-        lang = lang or "English"
-
-        convo = "\n".join(log[-40:])   # cap at last 40 turns to stay within token budget
-        prompt = (
-            f"Summarize this conversation in 1-2 sentences in {lang}. "
-            "Focus on what the user accomplished or discussed. "
-            "Refer to the assistant only in the first person ('I'), never by name. "
-            "Output ONLY the summary text, nothing else:\n\n" + convo
-        )
-        try:
-            summary = await asyncio.to_thread(
-                gemini_call_resilient, prompt, None, "gemini-flash-latest", "general"
-            )
-            if summary and not summary.startswith("Não foi possível obter resposta"):
-                memory_store.save_session_summary(summary, lang)
-        except Exception as e:
-            print(f"[Memory] ⚠️ Session summary failed: {e}")
-
-    # ── System monitor ──────────────────────────────────────────────────────────
-
-    async def _turn_watchdog(self) -> None:
-        """Reconecta após uma solicitação sem resposta, fora de tools ativas/background."""
-        RESPONSE_TIMEOUT = 20.0
-        while True:
-            await asyncio.sleep(5)
-            bg_tasks_pending = self._tasks.pending_count()
-            if self._active_tool_tasks or bg_tasks_pending > 0:
-                self._last_turn_activity = time.monotonic()
-                continue
-            if (
-                self._vision_answer_pending
-                and self._vision_started_at
-                and time.monotonic() - self._vision_started_at > 30
-            ):
-                self.ui.write_log(
-                    "SYS: ⚠️ A análise da tela demorou demais; reconectando a sessão."
-                )
-                self._pending_vision = None
-                self._vision_answer_pending = False
-                self._vision_busy = False
-                self._vision_started_at = 0.0
-                self._vision_close_pending = False
-                raise RuntimeError("Watchdog: vision response timeout")
-            now = time.monotonic()
-            if _watchdog_should_reconnect(
-                self._awaiting_response, self._last_turn_activity, now, RESPONSE_TIMEOUT
-            ):
-                self.ui.write_log(
-                    f"SYS: ⚠️ Sem resposta do modelo há {RESPONSE_TIMEOUT:.0f}s — reconectando."
-                )
-                self._awaiting_response = False
-                raise RuntimeError("Watchdog: sem resposta do modelo — reconectando.")
-    async def _run_system_monitor(self) -> None:
-        """Background task: voice alerts when metrics exceed thresholds."""
-        while True:
-            await asyncio.sleep(10)
-            alert = await asyncio.to_thread(self._sys_monitor.check)
-            if not alert or not self.session:
-                continue
-            # Don't interrupt an active conversation
-            with self._speaking_lock:
-                speaking = self._is_speaking
-            if speaking or (time.monotonic() - self._last_user_speech) < 10 or is_foreground_fullscreen():
-                continue
-            try:
-                await self._safe_send_content([{"text": alert}])
-            except Exception as e:
-                print(f"[Monitor] ⚠️ Could not send alert: {e}")
-
-    # ── Background monitor ──────────────────────────────────────────────────────
-
-    async def _run_background_monitor(self) -> None:
-        """Check user-configured topics once per day; speak alerts when new headlines appear."""
-        await asyncio.sleep(300)          # wait 5 min after startup before first check
-        while True:
-            if self.session:
-                # Don't interrupt if user spoke recently or JARVIS is mid-sentence
-                with self._speaking_lock:
-                    speaking = self._is_speaking
-                recent_speech = (time.monotonic() - self._last_user_speech) < 30
-                if not speaking and not recent_speech and not is_foreground_fullscreen():
-                    try:
-                        alerts = await asyncio.to_thread(monitor_check_all)
-                        lang = memory_store.read_facts("identity").get("language", "").strip() or "English"
-                        for alert in alerts:
-                            msg = (
-                                f"{alert}\n\n"
-                                f"Inform the user about this development naturally in {lang}. "
-                                "One brief sentence only."
-                            )
-                            await self._safe_send_content([{"text": msg}])
-                            self.ui.write_log(f"SYS: Monitor alert sent.")
-                            await asyncio.sleep(6)   # gap between consecutive alerts
-                    except Exception as e:
-                        print(f"[Monitor] ⚠️ Background check error: {e}")
-            await asyncio.sleep(1800)     # check every 30 minutes
-
-    async def _run_context_reindex(self) -> None:
-        """Refresh the local file index every 15 minutes without blocking the main Live loop."""
-        await asyncio.sleep(5)
-        while True:
-            try:
-                roots = []
-                try:
-                    from core.context_resolver import _default_roots
-                    roots = _default_roots()
-                except Exception:
-                    roots = []
-                if roots:
-                    await asyncio.to_thread(context_index.rebuild_index, roots)
-            except Exception as e:
-                print(f"[ContextIndex] ⚠️ Reindex failed: {e}")
-            await asyncio.sleep(900)
-
-    # ── Proactive mode ──────────────────────────────────────────────────────────
-
-    async def _run_proactive_mode(self) -> None:
-        """Proatividade local opt-in: regras de uso contínuo e hora decidem quando falar."""
-        while True:
-            await asyncio.sleep(60)
-            if not self.session:
-                continue
-            now_dt = datetime.now(_TZ_BR)
-            self._proactive.observe(get_idle_seconds())
-            if not self._proactive.enabled:
-                continue
-            with self._speaking_lock:
-                speaking = self._is_speaking
-            if speaking or (time.monotonic() - self._last_user_speech) < 30:
-                continue
-            trigger = self._proactive.due_trigger(now_dt)
-            if not trigger:
-                continue
-            try:
-                await self._safe_send_content([{"text": self._proactive.build_prompt(trigger, now_dt)}])
-            except Exception as e:
-                print(f"[Proactive] ⚠️ {e}")
-                continue
-            self._proactive.mark_fired(trigger, now_dt)
-            write_guard.log_action("proactive", trigger, True)
-            self.ui.write_log(f"SYS: Aviso proativo ({trigger}).")
-
     def set_proactive(self, state: str) -> str:
         """Liga/desliga/consulta a proatividade local (opt-in). Persiste em configuração."""
         state = (state or "status").strip().lower()
@@ -1477,67 +1041,22 @@ class JarvisLive:
 
     # ── main loop ───────────────────────────────────────────────────────────
 
-    async def _resolve_live_model(self) -> None:
-        """
-        Monta self._live_candidates: prioriza cache salvo (evita chamar
-        models.list() em todo boot), depois descoberta dinâmica, depois
-        fallback estático. Nunca deixa a lista vazia.
-        """
-        api_key = _get_api_key()
-        cached = _read_config().get(_LIVE_MODEL_CACHE_KEY)
-
-        discovered = await asyncio.to_thread(_discover_live_models, api_key)
-
-        if not discovered:
-            self.ui.write_log(
-                "SYS: ⚠️ Nenhum modelo Live descoberto via API — usando "
-                "cache/fallback estático. Se a conexão falhar, verifique "
-                "a API key e disponibilidade do modelo Live no console."
-            )
-
-        candidates: list[str] = []
-        if cached:
-            candidates.append(cached)
-        for m in discovered:
-            if m not in candidates:
-                candidates.append(m)
-        for m in LIVE_MODEL_FALLBACKS:
-            if m not in candidates:
-                candidates.append(m)
-
-        self._live_candidates = candidates
-        self._live_idx = 0
-        _msg = f"Live model em uso: {candidates[0]}  (+{len(candidates)-1} fallback(s))"
-        print(f"[JARVIS] 🎯 {_msg}")
-        self.ui.write_log(f"SYS: {_msg}")
-
-    def _current_live_model(self) -> str:
-        if not self._live_candidates:
-            return LIVE_MODEL_FALLBACKS[0]
-        return self._live_candidates[self._live_idx % len(self._live_candidates)]
-
-    def _advance_live_model(self) -> None:
-        """Rotaciona para o próximo candidato após rejeição 1007/1008."""
-        if len(self._live_candidates) > 1:
-            self._live_idx = (self._live_idx + 1) % len(self._live_candidates)
-        self.ui.write_log(f"SYS: Tentando model id alternativo: {self._current_live_model()}")
-
     def _start_runtime_tasks(self, tg) -> None:
         """Registra as tarefas de execução da sessão para manter run() enxuto."""
         if not self._boot_greeted:
             self._boot_greeted = True
-            tg.create_task(self._send_boot_greeting())
+            tg.create_task(session_lifecycle.send_boot_greeting(self))
         if self._mic_available:
             tg.create_task(self._send_realtime(), name="send")
             tg.create_task(self._listen_audio(), name="listen")
         tg.create_task(self._receive_audio())
         tg.create_task(self._play_audio())
-        tg.create_task(self._run_system_monitor())
-        tg.create_task(self._run_background_monitor())
-        tg.create_task(self._run_context_reindex())
+        tg.create_task(session_loops.run_system_monitor(self))
+        tg.create_task(session_loops.run_background_monitor(self))
+        tg.create_task(session_loops.run_context_reindex(self))
         if self._mic_available:
-            tg.create_task(self._turn_watchdog(), name="watchdog")
-        tg.create_task(self._run_proactive_mode())
+            tg.create_task(session_loops.run_turn_watchdog(self), name="watchdog")
+        tg.create_task(session_loops.run_proactive_mode(self))
 
     def _prepare_session_state(self) -> None:
         """Reseta o estado de sessão vivo para manter run() organizado e consistente."""
@@ -1580,7 +1099,7 @@ class JarvisLive:
             self.ui.write_log("SYS: ⚠️ Nenhum microfone detectado — iniciando em Modo Texto.")
             self.ui.set_mic_mode(False)
 
-        await self._resolve_live_model()
+        await self._model_resolver.resolve(_get_api_key())
 
     def _flatten_err_text(self, exc: BaseException) -> str:
         """Converte ExceptionGroup em texto plano para diagnóstico de reconexão."""
@@ -1601,20 +1120,14 @@ class JarvisLive:
         print(f"[JARVIS] Error ({type(exc).__name__}): {exc}")
         traceback.print_exc()
 
-        if self._enhanced_live and (
-            "INVALID_ARGUMENT" in err_str
-            or "affective" in err_str.lower()
-            or "proactiv" in err_str.lower()
-            or "Unknown name" in err_str
-            or "unexpected keyword" in err_str
-        ):
+        if self._enhanced_live and is_feature_rejection(err_str):
             self._enhanced_live = False
             self.ui.write_log(
                 "SYS: Advanced audio features unavailable — reconnecting without them."
             )
             return
 
-        if "API key not valid" in err_str or "API_KEY_INVALID" in err_str:
+        if is_invalid_api_key(err_str):
             self.ui.write_log("ERR: API key invalid — please re-enter your key.")
             self.ui.set_state("SLEEPING")
             self.ui.prompt_reconfig()
@@ -1624,27 +1137,23 @@ class JarvisLive:
             self._conn_backoff = 3
             return
 
-        if "1007" in err_str or "1008" in err_str or "not found for API version" in err_str:
+        if is_model_rejection(err_str):
             self.ui.write_log(
                 f"ERR: Live rejeitada ({'1008' if '1008' in err_str else '1007'}) — "
-                f"model='{self._current_live_model()}'. Chave NÃO foi resetada."
+                f"model='{self._model_resolver.current()}'. Chave NÃO foi resetada."
             )
             if self._enhanced_live:
                 self._enhanced_live = False
                 self.ui.write_log("SYS: Reconectando em v1beta (sem affective dialog).")
                 return
-            self._advance_live_model()
-            if self._live_idx == 0:
-                await self._resolve_live_model()
+            self._model_resolver.advance()
+            if self._model_resolver.idx == 0:
+                await self._model_resolver.resolve(_get_api_key())
             self._enhanced_live = True
             self._conn_backoff = min(getattr(self, "_conn_backoff", 3) * 2, 30)
             return
 
-        is_net_err = any(k in err_str for k in (
-            "TimeoutError", "timed out", "getaddrinfo", "CancelledError",
-            "ConnectionRefusedError", "OSError", "Cannot connect",
-        ))
-        if is_net_err:
+        if is_network_error(err_str):
             self._conn_backoff = min(getattr(self, "_conn_backoff", 3) * 2, 60)
             self.ui.write_log(
                 f"NET: Falha de conexão — nova tentativa em {self._conn_backoff}s. "
@@ -1663,7 +1172,7 @@ class JarvisLive:
         # v1alpha carries the enhanced audio features (affective dialog,
         # proactive audio); if they get rejected we fall back to v1beta.
         client = self._create_live_client()
-        _live_model = self._current_live_model()
+        _live_model = self._model_resolver.current()
 
         async with (
             client.aio.live.connect(model=_live_model, config=config) as session,
@@ -1712,7 +1221,7 @@ class JarvisLive:
         if self._boot_greeted and len(self._session_log) == 0:
             self._boot_greeted = False
         if len(self._session_log) >= 3:
-            asyncio.create_task(self._save_session_summary())
+            asyncio.create_task(session_lifecycle.save_session_summary(self))
 
         self.set_speaking(False)
         self.ui.set_state("SLEEPING")

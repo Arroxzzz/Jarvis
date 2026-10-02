@@ -209,6 +209,7 @@ def test_save_memory_tool_writes_the_requested_structured_category():
 
     response = asyncio.run(live._execute_tool_impl(DummyFC()))
     assert response.response["result"] == "ok"
+    assert response.response["silent"] is True
     assert read_facts("identity")["name"] == "Senhor"
 
 
@@ -1289,6 +1290,7 @@ def test_save_memory_tool_rejects_sensitive_data():
 
     response = asyncio.run(live._execute_tool_impl(DummyFC()))
     assert response.response["result"].lower().startswith("memória sensível")
+    assert response.response["silent"] is True
 
 
 def test_save_memory_tool_requires_confirmation_for_suggested_entries():
@@ -1313,6 +1315,7 @@ def test_save_memory_tool_requires_confirmation_for_suggested_entries():
     response = asyncio.run(live._execute_tool_impl(DummyFC()))
 
     assert "confirmar" in response.response["result"].lower()
+    assert response.response["silent"] is True
     assert kv_module.list_notes() == before
 
 
@@ -1622,6 +1625,7 @@ def test_save_memory_with_user_confirmed_saves_immediately_no_voice_gate():
     response = asyncio.run(live._execute_tool_impl(DummyFC()))
 
     assert response.response["result"] == "ok"
+    assert response.response["silent"] is True
     assert len(kv_module.list_notes()) > len(before)
 
 
@@ -1982,10 +1986,9 @@ def test_write_guard_accepts_split_confirmations_and_rejections():
 
 def test_boot_greeting_uses_first_person_without_self_name(monkeypatch):
     from datetime import datetime
-    import main
-    from main import JarvisLive
+    from core import memory_store, session_lifecycle
 
-    live = object.__new__(JarvisLive)
+    live = type("FakeJarvis", (), {})()
     live.session = object()
     sent = []
 
@@ -1993,20 +1996,20 @@ def test_boot_greeting_uses_first_person_without_self_name(monkeypatch):
         sent.append(parts[0]["text"])
 
     live._safe_send_content = fake
-    monkeypatch.setattr(main.memory_store, "pop_last_session", lambda: None)
+    monkeypatch.setattr(memory_store, "pop_last_session", lambda: None)
     monkeypatch.delenv("JARVIS_NEW_ENVIRONMENT", raising=False)
-    asyncio.run(live._send_boot_greeting())
+    asyncio.run(session_lifecycle.send_boot_greeting(live))
     assert "primeira pessoa" in sent[0]
     assert "próprio nome" in sent[0]
     assert "Cumprimente" not in sent[0]
 
     sent.clear()
     monkeypatch.setattr(
-        main.memory_store,
+        memory_store,
         "pop_last_session",
         lambda: {"date": datetime.now().strftime("%Y-%m-%d"), "summary": "Testamos o vault."},
     )
-    asyncio.run(live._send_boot_greeting())
+    asyncio.run(session_lifecycle.send_boot_greeting(live))
     assert "Testamos o vault." in sent[0]
     assert "primeira pessoa" in sent[0]
 

@@ -1,3 +1,39 @@
+## Refatoração de `main.py` — Fases A, B e C concluídas
+
+Escopo: decompor lógica isolável de `main.py` sem reordenar ou refatorar o fluxo de áudio em tempo real.
+
+### Fase A — helpers puros e bootstrap
+
+- `get_base_dir()` local foi substituída pelo import de `core.paths`.
+- `core/transcript_utils.py` contém `_CTRL_RE`, `_clean_transcript`, `_join_transcript`, `_should_close_wake_gate` e `_watchdog_should_reconnect`; as quatro funções usadas pelos testes antigos continuam reexportadas por `main.py`.
+- `core/platform_bootstrap.py` aplica o ajuste UTF-8 de stdout/stderr e, no Windows, o patch de `subprocess.Popen` com `CREATE_NO_WINDOW`; seu import é a primeira linha de `main.py`.
+- Validação registrada ao final da fase: 129 testes passaram; `main.py` tinha 1.704 linhas.
+
+### Fase B — extração de lógica isolável
+
+- `core/live_model_resolver.py` contém `_discover_live_models`, `_validate_gemini_key` e `LiveModelResolver`; `main.py` usa `self._model_resolver`.
+- `core/session_prompt.py` contém `build_system_instruction()`.
+- `core/reconnect_policy.py` contém os predicados `is_feature_rejection`, `is_invalid_api_key`, `is_model_rejection` e `is_network_error`; efeitos e state machine de reconexão permanecem em `main.py`.
+- Validação registrada ao final da fase: 147 testes passaram; `main.py` tinha 1.582 linhas. O Senhor informou validação manual do fluxo Live; esse teste manual não é verificável pelo repositório.
+
+### Fase C — tools, loops e lifecycle
+
+- `ToolSpec` e `register_tool()` aceitam `timeout` opcional; `dispatch_tool()` executa funções síncronas no executor e preserva retorno textual ou estruturado. O timeout interrompe a espera assíncrona, mas não força o encerramento da thread já iniciada no executor.
+- `find_context`, `save_memory`, `knowledge_note` e `shutdown_jarvis` foram registrados em `core/tool_registry.py`; os quatro handlers especiais foram removidos de `main.py::_execute_tool_impl`.
+- `save_memory` mantém `{"silent": True}` nos retornos estruturados; `shutdown_jarvis` mantém `silent_result=True` no `write_guard`.
+- `knowledge_note` tem timeout configurado em 10 segundos. Seu retorno de timeout não aguarda o resultado; a thread síncrona iniciada no executor pode continuar até terminar.
+- `main.py::_execute_tool_impl` tem um ponto genérico de criação de `FunctionResponse` compartilhado pelos caminhos simple e advanced; preserva o dict retornado ou envolve outros valores em `{"result": ...}`.
+- `core/session_loops.py` contém `run_system_monitor`, `run_background_monitor`, `run_context_reindex`, `run_proactive_mode` e `run_turn_watchdog`.
+- `core/session_lifecycle.py` contém `send_boot_greeting` e `save_session_summary`.
+- Validação registrada ao final da fase: 151 testes passaram; `main.py` tinha 1.264 linhas. `git diff --check` passou.
+
+### Verificações manuais ainda pendentes
+
+- [ ] Testar em voz que `save_memory` não seja narrada ao salvar.
+- [ ] Testar em voz a confirmação de `shutdown_jarvis` e verificar o encerramento real.
+
+Fase D não foi executada nem autorizada por este registro; reavaliar somente após uso real das fases A-C e decisão explícita.
+
 ## Fase 7 — Estabilização de Voz, Ferramentas e Custo (concluída)
 
 - [x] Registro histórico do watchdog: a correção inicial moveu o reset do contador para a conclusão do turno; a implementação atual usa timeout de 20 segundos para reconectar uma resposta pendente.
@@ -50,9 +86,9 @@
 - [x] Registro histórico inicial: `open_app`; `weather_report` removida posteriormente.
 - [x] `browser_control`, `file_controller`, `open_on_monitor` e `reminder` migrados; `send_message` e `youtube_video` removidos posteriormente.
 - [x] `computer_settings`, `desktop_control`, `code_helper`, `dev_agent`, `web_search`, `file_processor`, `computer_control`, `game_updater`, `system_status`, `deep_reasoning` e `manage_monitor` migrados; `flight_finder` removida posteriormente.
-- [x] Casos especiais mantidos fora do registry: `find_context`, `save_memory`, `knowledge_note`, `shutdown_jarvis`, `screen_process`, `close_camera`; `sync_memory` foi removida posteriormente.
-- [x] `_execute_tool_impl` reduzido para casos especiais + fallback do registry
-- [x] `TOOL_DECLARATIONS` derivado de `tool_registry.get_declarations()` com mescla dos casos especiais
+- [x] `find_context`, `save_memory`, `knowledge_note` e `shutdown_jarvis` registrados no registry; `screen_process` e `close_camera` continuam como handlers dedicados; `sync_memory` foi removida posteriormente.
+- [x] `_execute_tool_impl` roteia tools pelo registry e mantém handlers dedicados para `screen_process` e `close_camera`.
+- [x] `TOOL_DECLARATIONS` fornecido por `tool_registry.get_declarations()` e combinado com as declarações de plugins no build da sessão.
 - [x] 7 fluxos da Fase 0 revalidados
 
 ### Fase 2 — Context Index (SQLite)
@@ -67,6 +103,7 @@
 - [x] Projeto usa `tool_registry` em vez de `if name == ...` no `main.py`.
 - [x] Projeto usa `memory/context_index.db` (SQLite) para buscas rápidas de contexto local.
 - [x] Suíte relevante confirmada em verde: `78 passed in 2.75s`.
+- [x] Fase C: retornos estruturados no tool registry, timeout opcional para `knowledge_note`, extração dos cinco loops de background para `core/session_loops.py` e do lifecycle para `core/session_lifecycle.py`; validação atual: 151 testes passando.
 
 **Próxima etapa definida naquele registro: operação real controlada e refinamento final**
 

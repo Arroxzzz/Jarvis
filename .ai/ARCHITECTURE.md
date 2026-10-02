@@ -31,14 +31,21 @@
 
 ## Estrutura principal
 
-- `main.py`: orquestração do fluxo principal, áudio, tools, visão, reconexão e integração de memória/contexto; delega o runtime de tasks ao tracker. Está com 1.920 linhas no checkout verificado nesta atualização.
+- `main.py`: orquestração do fluxo principal, áudio, tools, visão e reconexão; delega loops e lifecycle da sessão a módulos dedicados. Está com 1.264 linhas no checkout verificado nesta atualização.
 - `core/async_tool_runner.py`: execução limitada de tools, com wrappers de timeout.
 - `core/background_tasks.py`: contador/lock de tasks em background e deduplicação/entrega de resultados no painel.
+- `core/session_loops.py`: loops de monitoramento, reindexação contextual, proatividade e watchdog.
+- `core/session_lifecycle.py`: saudação de boot e persistência do resumo da sessão.
+- `core/platform_bootstrap.py`: inicialização de encoding de streams e patch de subprocesso no Windows; deve ser importado antes dos módulos de runtime.
+- `core/transcript_utils.py`: limpeza e junção de transcrições, gate de fala e predicado temporal do watchdog.
+- `core/live_model_resolver.py`: descoberta, validação e seleção/rotação dos modelos Live.
+- `core/session_prompt.py`: composição da instrução de sistema para uma sessão Live.
+- `core/reconnect_policy.py`: predicados de classificação de erros usados pela state machine mantida em `main.py`.
 - `core/knowledge_vault.py`: notas Markdown no caminho configurado por `vault_path`, com WikiLinks automáticos, backlinks, resumo de boot e busca contextual.
 - `core/memory_store.py`: fatos estruturados (`Identidade.md`, `Preferencias.md`, `Desejos.md`), notas de projetos/pessoas e log `Sessoes.md`, usando o vault.
 - `core/runtime_state.py`: estado local volátil de monitores e tópicos, separado da memória pessoal.
 - `core/context_index.py`: índice SQLite/FTS5 dos roots locais e dos arquivos Markdown do vault Obsidian.
-- `core/tool_registry.py` e `core/tool_declarations.py`: registro/dispatch e declarações das tools principais.
+- `core/tool_registry.py` e `core/tool_declarations.py`: registro/dispatch das tools principais, incluindo retornos estruturados e timeout opcional por tool.
 - `core/llm_client.py`: chamadas de texto, limites por tipo de tarefa, métricas e fallback Groq → OpenRouter; Claude Sonnet 5 fica reservado para `deep_reasoning`.
 - `core/wake_word_gate.py`: buffer de áudio e gate openWakeWord configurável.
 - `actions/proactive.py` e `core/hw_sensors.py`: proatividade local opt-in e consultas leves de inatividade/tela cheia.

@@ -16,7 +16,7 @@
   conclusão, duração de tools e duração de providers são emitidos como eventos `[METRIC]`.
 - `core/llm_client.py` mede chamadas remotas Groq/OpenRouter sem registrar conteúdo.
 - Comandos de texto agora iniciam eventos `[METRIC]` próprios; o caminho sem microfone participa do baseline.
-- Validação atual do checkout: `python -m pytest tests/ -v` — 129 testes passaram em 5,20 s.
+- Validação atual do checkout: `python -m pytest tests/ -v` — 151 testes passaram.
 - `core/llm_client.py` agora registra `Retry-After`/rate-limit, bloqueia provider em circuit breaker e faz fallback Groq→OpenRouter de forma controlada.
 - O loader de plugins foi ajustado para opt-in por padrão: plugins novos descobertos em `/plugins` nascem desligados até ativação explícita no Plugin Manager; isso evita que código de terceiro seja ativado por omissão.
 - O log de boot em `main.py` agora conta plugins ativos e desligados, sem anunciar módulos indisponíveis como “carregados”.
@@ -27,7 +27,10 @@
 - O wake word é configurável e opt-in por padrão no código; na configuração local atual está habilitado com um modelo ONNX próprio em `models/wake/jarvis.onnx`. A validação de três dias de uso real continua pendente.
 - A proatividade local existe com regras de tempo de uso/horário, mas está desabilitada na configuração local atual.
 - A criptografia do pacote portátil e a sincronização Supabase foram removidas; `core/crypto_vault.py` não existe mais.
-- `main.py` tem 1.755 linhas no checkout atual. As contagens de linhas abaixo são registros históricos de versões anteriores.
+- `main.py` tem 1.264 linhas no checkout atual. As contagens de linhas abaixo são registros históricos de versões anteriores.
+- `core/tool_registry.py` registra também `find_context`, `save_memory`, `knowledge_note` e `shutdown_jarvis`; dispatch preserva retornos estruturados e oferece timeout opcional.
+- `core/session_loops.py` contém os cinco loops de background; `core/session_lifecycle.py` contém saudação de boot e resumo de sessão.
+- As Fases A-C da decomposição foram concluídas: helpers de transcrição/bootstrap, resolução de modelo Live, composição de prompt, predicados de reconexão, tools especiais, loops e lifecycle estão nos módulos `core/` correspondentes; o fluxo de áudio em tempo real permaneceu no orquestrador.
 - Removidos do runtime: boot/empacotamento portátil, sincronização Supabase, briefing automático, builders/widgets Qt legados, `core/crypto_vault.py` e as actions `weather_report`, `send_message`, `flight_finder` e `youtube_video`. A dependência `youtube-transcript-api` também foi removida.
 - `memory/context_index.db` e `memory/audit_log.jsonl` são dados locais e não são versionados.
 - `core/memory_store.py` usa o vault Markdown para fatos (`Identidade.md`, `Preferencias.md`, `Desejos.md`), sessões (`Sessoes.md`) e notas organizadas em `Projetos/`, `Pessoas/` e `Notas/`. `core/runtime_state.py` guarda posições de monitores e tópicos monitorados em `memory/runtime_state.json`. Os dados migrados de `memory/long_term.json` foram verificados; o arquivo e `memory/memory_manager.py` foram removidos.
@@ -155,7 +158,7 @@ Free tier não significa SLA, disponibilidade contínua ou latência constante.
 - A memória local foi integrada com política de decisão em quatro estados: automatic, suggested, explicit e ignore.
 - O contexto local do computador e do projeto foi resolvido com busca segura, sem expor caminhos absolutos ao usuário.
 - O `dev_agent` atua em revisão e mentoria guiada, sem autoalteração irrestrita.
-- A suíte atual tem 129 testes passando; os registros de 78 testes nas fases abaixo são resultados históricos daquela etapa.
+- A suíte atual tem 151 testes passando; os registros de 78 testes nas fases abaixo são resultados históricos daquela etapa.
 - O modelo de plugins foi fechado em opt-in: qualquer plugin desconhecido ou de terceiro nasce desligado até habilitação explícita, evitando ativação silenciosa por descoberta automática.
 - A experiência de uso do assistente foi refinada para reduzir ruído de confirmação: ações não destrutivas seguem fluxo direto e só exclusão exige consentimento local.
 - A Fase 4 foi concluída com `BackgroundTaskTracker`; a última validação de então registrou 78 testes passando.
