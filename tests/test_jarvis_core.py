@@ -66,6 +66,152 @@ def test_list_notes_populated():
     assert sorted(kv_module.list_notes()) == ["a", "b"]
 
 
+def test_memory_store_upsert_fact_and_context_format():
+    from core.memory_store import read_facts, read_structured_context, upsert_fact
+
+    upsert_fact("identity", "name", "Paulo")
+    upsert_fact("preferences", "coffee_preference", "coffee")
+    upsert_fact("wishes", "travel", "visit Japan")
+    upsert_fact("identity", "name", "Senhor")
+
+    identity_note = kv_module.read_note("Identidade")
+    assert identity_note.count("- name:") == 1
+    assert read_facts("identity")["name"] == "Senhor"
+    context = read_structured_context()
+    assert "Name: Senhor" in context
+    assert "Preferences:" in context
+    assert "Coffee Preference: coffee" in context
+    assert "Wishes / Plans / Wants:" in context
+    assert "Travel: visit Japan" in context
+
+
+def test_memory_store_project_and_person_notes_use_nested_paths():
+    from core.memory_store import write_person_note, write_project_note
+
+    write_project_note("jarvis", "# JARVIS\n\nLocal project.")
+    write_person_note("alex", "# Alex\n\nA colleague.")
+
+    assert kv_module.read_note("Projetos/jarvis") == "# JARVIS\n\nLocal project.\n"
+    assert kv_module.read_note("Pessoas/alex") == "# Alex\n\nA colleague.\n"
+    assert "Projetos/jarvis" in kv_module.list_notes()
+    assert "Pessoas/alex" in kv_module.list_notes()
+
+
+def test_memory_store_session_log_appends_and_pops_latest():
+    from core.memory_store import pop_last_session, save_session_summary
+
+    save_session_summary("First summary.", "English")
+    save_session_summary("Second summary.", "Portuguese")
+
+    latest = pop_last_session()
+    assert latest["summary"] == "Second summary."
+    assert latest["language"] == "Portuguese"
+    assert pop_last_session()["summary"] == "First summary."
+    assert pop_last_session() is None
+
+
+def test_runtime_state_keeps_monitor_positions_and_topics_separate(tmp_path, monkeypatch):
+    import core.runtime_state as runtime_state
+    from actions import background_monitor
+    from core.paths import get_monitor_position
+
+    monkeypatch.setattr(runtime_state, "RUNTIME_STATE_PATH", tmp_path / "runtime_state.json")
+    runtime_state.save_runtime_state({
+        "identity": {"monitors": {"value": {"secondary_x": 2560, "secondary_y": 40}}},
+        "monitors": {},
+    })
+    background_monitor._save({"jarvis": {"topic": "JARVIS"}})
+
+    assert get_monitor_position() == (2560, 40)
+    assert background_monitor._load()["jarvis"]["topic"] == "JARVIS"
+
+
+def test_memory_policy_routes_structured_and_named_facts(tmp_path, monkeypatch):
+    from core.memory_policy import MemoryProposal, persist_memory_proposal
+    from core.memory_store import read_facts
+
+    monkeypatch.setattr(kv_module, "KNOWLEDGE_DIR", tmp_path)
+    identity = MemoryProposal(
+        text="Senhor",
+        mode="automatic",
+        title="name",
+        content="Senhor",
+        category="identity",
+        can_write=True,
+        key="name",
+    )
+    assert persist_memory_proposal(identity)["saved"] is True
+    assert read_facts("identity")["name"] == "Senhor"
+
+    project = MemoryProposal(
+        text="O projeto Atlas será mantido.",
+        mode="automatic",
+        title="Projeto Atlas",
+        content="O projeto Atlas será mantido.",
+        category="projects",
+        can_write=True,
+    )
+    relationship = MemoryProposal(
+        text="Minha amiga Ana trabalha comigo.",
+        mode="automatic",
+        title="Ana",
+        content="Minha amiga Ana trabalha comigo.",
+        category="relationships",
+        can_write=True,
+    )
+    assert persist_memory_proposal(project)["note"] == "atlas"
+    assert persist_memory_proposal(relationship)["note"] == "ana"
+    assert kv_module._resolve("Projetos/atlas").exists()
+    assert kv_module._resolve("Pessoas/ana").exists()
+
+
+def test_memory_policy_uses_short_hash_when_project_has_no_name():
+    from core.memory_policy import _note_slug
+
+    slug = _note_slug("projects", "Uma decisão geral sem nome próprio.")
+    assert slug.startswith("projeto-")
+    assert len(slug.removeprefix("projeto-")) == 10
+
+
+def test_computer_control_profile_reads_structured_identity():
+    from core.memory_store import upsert_fact
+    from actions.computer_control import _user_profile
+
+    upsert_fact("identity", "name", "Senhor")
+    upsert_fact("identity", "language", "Portuguese")
+    upsert_fact("identity", "unapproved_field", "ignored")
+
+    assert _user_profile() == {"name": "Senhor", "language": "Portuguese"}
+
+
+def test_save_memory_tool_writes_the_requested_structured_category():
+    from main import JarvisLive
+    from core.memory_store import read_facts
+
+    class DummyUI:
+        muted = True
+
+        def set_state(self, *_args, **_kwargs):
+            return None
+
+    live = object.__new__(JarvisLive)
+    live.ui = DummyUI()
+
+    class DummyFC:
+        id = "structured-memory"
+        name = "save_memory"
+        args = {
+            "category": "identity",
+            "key": "name",
+            "value": "Senhor",
+            "user_confirmed": True,
+        }
+
+    response = asyncio.run(live._execute_tool_impl(DummyFC()))
+    assert response.response["result"] == "ok"
+    assert read_facts("identity")["name"] == "Senhor"
+
+
 def test_search_finds_match():
     kv_module.write_note("demo", "Matt Murdock é o Demolidor")
     assert "demo" in kv_module.search_notes("Demolidor")
@@ -962,12 +1108,24 @@ def test_persistent_fact_becomes_automatic():
     assert proposal.project
 
 
+def test_memory_policy_classifies_structured_fact_categories():
+    from core.memory_policy import classify_memory
+
+    preference = classify_memory("O Senhor prefere café sem açúcar.")
+    relationship = classify_memory("A irmã Ana gosta de música.")
+    wish = classify_memory("O sonho do Senhor é viajar para o Japão.")
+
+    assert preference.category == "preferences"
+    assert relationship.category == "relationships"
+    assert wish.category == "wishes"
+
+
 def test_project_milestone_becomes_automatic():
     from core.memory_policy import classify_memory
 
     proposal = classify_memory("Decidimos usar Gemini Live como canal principal de voz e visão no JARVIS.")
     assert proposal.mode == "automatic"
-    assert proposal.category in {"decisao", "projeto", "stack"}
+    assert proposal.category == "projects"
 
 
 def test_important_info_becomes_suggested():
@@ -1032,16 +1190,13 @@ def test_suggested_or_ignored_proposals_need_confirmation_to_write():
 
 
 def test_automatic_proposal_is_persisted_to_vault(tmp_path, monkeypatch):
-    import core.knowledge_vault as kv_module
     from core.memory_policy import classify_memory, persist_memory_proposal
-
-    monkeypatch.setattr(kv_module, "KNOWLEDGE_DIR", tmp_path)
 
     proposal = classify_memory("O objetivo do projeto é manter a memória local em Obsidian e manter o JARVIS seguro.")
     outcome = persist_memory_proposal(proposal)
 
     assert outcome["saved"] is True
-    assert "objetivo" in kv_module.list_notes()[0].lower() or any("obj" in item.lower() for item in kv_module.list_notes())
+    assert any(item.startswith("Projetos/") for item in kv_module.list_notes())
 
 
 def test_explicit_proposal_is_persisted_immediately():
@@ -1838,7 +1993,7 @@ def test_boot_greeting_uses_first_person_without_self_name(monkeypatch):
         sent.append(parts[0]["text"])
 
     live._safe_send_content = fake
-    monkeypatch.setattr(main, "pop_last_session", lambda: None)
+    monkeypatch.setattr(main.memory_store, "pop_last_session", lambda: None)
     monkeypatch.delenv("JARVIS_NEW_ENVIRONMENT", raising=False)
     asyncio.run(live._send_boot_greeting())
     assert "primeira pessoa" in sent[0]
@@ -1847,7 +2002,7 @@ def test_boot_greeting_uses_first_person_without_self_name(monkeypatch):
 
     sent.clear()
     monkeypatch.setattr(
-        main,
+        main.memory_store,
         "pop_last_session",
         lambda: {"date": datetime.now().strftime("%Y-%m-%d"), "summary": "Testamos o vault."},
     )

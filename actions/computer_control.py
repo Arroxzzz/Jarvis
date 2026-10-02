@@ -39,7 +39,6 @@ def _base_dir() -> Path:
 
 _BASE         = _base_dir()
 _CONFIG_PATH  = _BASE / "config" / "api_keys.json"
-_MEMORY_PATH  = _BASE / "memory" / "long_term.json"
 
 def _load_config() -> dict:
     try:
@@ -152,18 +151,14 @@ _USER_DATA_ALLOWLIST = {
 }
 
 def _user_profile() -> dict:
-    """Read identity fields from long-term memory — apenas campos na allowlist."""
-    try:
-        if _MEMORY_PATH.exists():
-            data     = json.loads(_MEMORY_PATH.read_text(encoding="utf-8"))
-            identity = data.get("identity", {})
-            return {
-                k: v.get("value", "") for k, v in identity.items()
-                if k in _USER_DATA_ALLOWLIST
-            }
-    except Exception:
-        pass
-    return {}
+    """Read only approved identity fields from structured Markdown memory."""
+    from core.memory_store import read_facts
+
+    return {
+        key: value
+        for key, value in read_facts("identity").items()
+        if key in _USER_DATA_ALLOWLIST
+    }
 
 def _type(text: str, interval: float = 0.03) -> str:
     _require_pyautogui()

@@ -4,7 +4,7 @@
 
 - Interface atual: UI WebEngine hospedada em PyQt6, com a GUI em thread principal e a sessão em thread asyncio separada. Os builders/widgets Qt legados foram removidos.
 - Voz: Gemini Live como canal principal. Para tools e texto, a cadeia padrão é Groq → OpenRouter; Claude Sonnet 5 fica restrito a `deep_reasoning`. Não há LLM local na configuração de produto.
-- Memória: política em 4 estados e gravação local em Obsidian/Markdown no diretório configurado por `vault_path`.
+- Memória: política em 4 estados; fatos estruturados, sessões, projetos, pessoas e notas locais ficam em Markdown no vault configurado por `vault_path`. Estado volátil de runtime fica em `memory/runtime_state.json`.
 - Contexto: busca segura por arquivos e projeto ativo, com rótulos amigáveis para o usuário.
 - Segurança: rejeição de segredos, confirmação para ações sensíveis, modo de revisão sem autoexecução e políticas de opt-in para plugins de terceiros.
 - Wake word: `core/wake_word_gate.py` usa openWakeWord e aceita modelo configurável. O código vem desligado por padrão; a configuração local verificada liga `models/wake/jarvis.onnx`. A validação operacional por três dias ainda está pendente.
@@ -35,6 +35,8 @@
 - `core/async_tool_runner.py`: execução limitada de tools, com wrappers de timeout.
 - `core/background_tasks.py`: contador/lock de tasks em background e deduplicação/entrega de resultados no painel.
 - `core/knowledge_vault.py`: notas Markdown no caminho configurado por `vault_path`, com WikiLinks automáticos, backlinks, resumo de boot e busca contextual.
+- `core/memory_store.py`: fatos estruturados (`Identidade.md`, `Preferencias.md`, `Desejos.md`), notas de projetos/pessoas e log `Sessoes.md`, usando o vault.
+- `core/runtime_state.py`: estado local volátil de monitores e tópicos, separado da memória pessoal.
 - `core/context_index.py`: índice SQLite/FTS5 dos roots locais e dos arquivos Markdown do vault Obsidian.
 - `core/tool_registry.py` e `core/tool_declarations.py`: registro/dispatch e declarações das tools principais.
 - `core/llm_client.py`: chamadas de texto, limites por tipo de tarefa, métricas e fallback Groq → OpenRouter; Claude Sonnet 5 fica reservado para `deep_reasoning`.

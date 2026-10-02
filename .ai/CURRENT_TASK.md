@@ -25,6 +25,7 @@
 - `encrypt_bytes`, `decrypt_bytes` e `_derive_key` foram removidas junto com `core/crypto_vault.py`, após a remoção de seus consumidores.
 - A UI WebEngine e o quick drawer continuam ativos; memória local, busca manual de notícias, monitoramento de tópicos, voz/áudio e reminder foram preservados.
 - `memory/context_index.db` e `memory/audit_log.jsonl` permanecem como dados locais, fora do versionamento.
+- A memória estruturada/sessões foi migrada para notas Markdown no vault; o estado de runtime fica em `memory/runtime_state.json`, substituindo `memory/long_term.json` e `memory/memory_manager.py`.
 
 - [x] Conferência objetiva dos três documentos contra os módulos diretamente relacionados, sem leitura linha a linha do projeto
 - [x] Confirmar que H5 não descreve mais o watchdog atual: `_turn_watchdog` reconecta quando uma resposta pendente passa de 20 segundos sem atividade

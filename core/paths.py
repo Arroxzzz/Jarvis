@@ -42,17 +42,21 @@ def get_documents_dir() -> Path:
 
 def get_monitor_position(monitor_name: str = "secondary") -> tuple[int, int]:
     """Retorna coordenada X,Y do início do monitor configurado."""
-    import json
     try:
-        mem = json.loads((get_base_dir() / "memory" / "long_term.json")
-                         .read_text(encoding="utf-8"))
-        monitors = mem.get("identity", {}).get("monitors", {}).get("value", {})
+        from core.runtime_state import load_runtime_state
+
+        identity = load_runtime_state().get("identity", {})
+        if not isinstance(identity, dict):
+            raise ValueError("Seção identity inválida em runtime_state.json.")
+        monitors = identity.get("monitors", {})
+        if isinstance(monitors, dict) and "value" in monitors:
+            monitors = monitors["value"]
         if isinstance(monitors, dict):
             x = int(monitors.get(f"{monitor_name}_x", 1920))
             y = int(monitors.get(f"{monitor_name}_y", 0))
             return x, y
-    except Exception:
-        pass
+    except (OSError, ValueError, TypeError, AttributeError) as exc:
+        print(f"[Paths] ⚠️ Could not read monitor position: {exc}")
     return 1920, 0
 
 

@@ -4,7 +4,7 @@ import os
 import sqlite3
 from pathlib import Path
 
-from memory.memory_manager import get_base_dir
+from core.paths import get_base_dir
 from core.knowledge_vault import OBSIDIAN_VAULT
 
 DB_PATH = get_base_dir() / "memory" / "context_index.db"

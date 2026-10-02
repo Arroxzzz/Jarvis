@@ -45,10 +45,7 @@ import sounddevice as sd
 from google import genai
 from google.genai import types
 from ui import JarvisUI
-from memory.memory_manager import (
-    load_memory, update_memory, format_memory_for_prompt,
-    save_session_summary, pop_last_session,
-)
+from core import memory_store
 
 from actions.file_processor import file_processor
 from actions.open_app          import open_app
@@ -585,8 +582,7 @@ class JarvisLive:
             self._asst_name = "JARVIS"
             _user_name = ""
 
-        memory     = load_memory()
-        mem_str    = format_memory_for_prompt(memory)
+        mem_str = memory_store.read_structured_context()
         from core.knowledge_vault import build_boot_digest
         vault_digest = build_boot_digest()
         sys_prompt = _load_system_prompt()
@@ -773,9 +769,11 @@ class JarvisLive:
             user_confirmed = bool(args.get("user_confirmed", False))
 
             if key and value:
-                from core.memory_policy import classify_memory, record_memory
+                from core.memory_policy import classify_memory, persist_memory_proposal
 
-                proposal = classify_memory(value, project=category, origin="tool")
+                proposal = classify_memory(value, project="JARVIS", origin="tool")
+                proposal.category = category
+                proposal.key = key
                 if proposal.mode == "ignore":
                     print(f"[Memory] 🚫 save_memory rejected: {category}/{key}")
                     if not self.ui.muted:
@@ -794,10 +792,9 @@ class JarvisLive:
                         response={"result": "Memória sugerida: confirmar gravação antes de salvar no vault.", "silent": True}
                     )
 
-                outcome = record_memory(
-                    value,
+                outcome = persist_memory_proposal(
+                    proposal,
                     confirmed=user_confirmed or proposal.mode in {"automatic", "explicit"},
-                    project=category, origin="tool",
                 )
                 if outcome.get("saved"):
                     print(f"[Memory] 💾 save_memory: {category}/{key} = {value}")
@@ -1286,7 +1283,7 @@ class JarvisLive:
         await asyncio.sleep(0.3)
         if not self.session:
             return
-        last = await asyncio.to_thread(pop_last_session)
+        last = await asyncio.to_thread(memory_store.pop_last_session)
         style = "Em PT-BR, em primeira pessoa, SEM dizer o seu próprio nome e sem a palavra 'online'."
         if last:
             try:
@@ -1316,15 +1313,13 @@ class JarvisLive:
     # ── Session memory ──────────────────────────────────────────────────────────
 
     async def _save_session_summary(self) -> None:
-        """Summarise the current session in 1-2 sentences and save to long_term.json."""
+        """Summarise the current session in 1-2 sentences and append it to Sessoes.md."""
         log = self._session_log
         if len(log) < 3:          # need at least one exchange to be worth saving
             return
         self._session_log = []    # reset immediately so the next session starts clean
 
-        memory = load_memory()
-        lang_entry = memory.get("identity", {}).get("language", {})
-        lang = (lang_entry.get("value", "") if isinstance(lang_entry, dict) else str(lang_entry)).strip()
+        lang = memory_store.read_facts("identity").get("language", "").strip()
         lang = lang or "English"
 
         convo = "\n".join(log[-40:])   # cap at last 40 turns to stay within token budget
@@ -1339,7 +1334,7 @@ class JarvisLive:
                 gemini_call_resilient, prompt, None, "gemini-flash-latest", "general"
             )
             if summary and not summary.startswith("Não foi possível obter resposta"):
-                save_session_summary(summary, lang)
+                memory_store.save_session_summary(summary, lang)
         except Exception as e:
             print(f"[Memory] ⚠️ Session summary failed: {e}")
 
@@ -1408,9 +1403,7 @@ class JarvisLive:
                 if not speaking and not recent_speech and not is_foreground_fullscreen():
                     try:
                         alerts = await asyncio.to_thread(monitor_check_all)
-                        memory = load_memory()
-                        lang_e = memory.get("identity", {}).get("language", {})
-                        lang   = (lang_e.get("value", "") if isinstance(lang_e, dict) else str(lang_e)).strip() or "English"
+                        lang = memory_store.read_facts("identity").get("language", "").strip() or "English"
                         for alert in alerts:
                             msg = (
                                 f"{alert}\n\n"

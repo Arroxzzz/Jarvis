@@ -1,8 +1,6 @@
 """
 core/knowledge_vault.py — Vault de conhecimento estilo Obsidian: notas em
-Markdown puro, leitura/escrita local instantânea. Complementa (não
-substitui) memory/long_term.json, que continua guardando dados
-estruturados (identity/preferences/etc).
+Markdown puro, leitura/escrita local instantânea e dados estruturados em notas.
 """
 import re
 from pathlib import Path
@@ -28,10 +26,14 @@ _ENTITY_PATTERN = re.compile(rf"{_CAPITALIZED}(?:\s+{_CAPITALIZED}){{0,2}}")
 
 
 def _resolve(name: str) -> Path:
-    name = name.strip().removesuffix(".md")
-    if not name or not _SAFE_NAME.match(name):
+    normalized = name.strip().replace("\\", "/").removesuffix(".md")
+    parts = normalized.split("/")
+    if not normalized or any(
+        part in {"", ".", ".."} or not _SAFE_NAME.fullmatch(part)
+        for part in parts
+    ):
         raise ValueError("Nome de nota inválido.")
-    return KNOWLEDGE_DIR / f"{name}.md"
+    return KNOWLEDGE_DIR.joinpath(*parts).with_suffix(".md")
 
 
 def _extract_entities(text: str) -> list[str]:
@@ -59,16 +61,25 @@ def _link_first_occurrence(text: str, entity: str) -> str:
     return text
 
 
-def write_note(name: str, content: str, append: bool = False) -> str:
+def write_note(
+    name: str,
+    content: str,
+    append: bool = False,
+    *,
+    link_entities: bool = True,
+) -> str:
     path = _resolve(name)
     if append and path.exists():
         existing = path.read_text(encoding="utf-8")
         content = existing.rstrip() + "\n\n" + content
-    for entity in _extract_entities(content):
-        if entity.casefold() != path.stem.casefold():
-            content = _link_first_occurrence(content, entity)
+    if link_entities:
+        for entity in _extract_entities(content):
+            if entity.casefold() != path.stem.casefold():
+                content = _link_first_occurrence(content, entity)
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content.strip() + "\n", encoding="utf-8")
-    return f"Nota '{path.stem}' salva."
+    note_name = path.relative_to(KNOWLEDGE_DIR).with_suffix("").as_posix()
+    return f"Nota '{note_name}' salva."
 
 
 def read_note(name: str) -> str:

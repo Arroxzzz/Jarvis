@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import hashlib
 import re
+import unicodedata
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Literal
 
 import core.knowledge_vault as knowledge_vault
+from core import memory_store
 
 MemoryMode = Literal["automatic", "suggested", "explicit", "ignore"]
 
@@ -59,6 +62,7 @@ class MemoryProposal:
     priority: str = "low"
     requires_confirmation: bool = False
     can_write: bool = False
+    key: str = ""
 
 
 def _looks_like_secret(text: str) -> bool:
@@ -149,17 +153,25 @@ def _title_from_text(text: str) -> str:
     return normalized[:77].rstrip() + "..."
 
 
-def _category_for(text: str, mode: MemoryMode) -> str:
+def _category_for(text: str) -> str:
     lower = text.lower()
+    if re.search(r"\b(?:amigo|amiga|irm[aã]o|irmã|mãe|pai|esposa|marido|filho|filha|parceir[oa]|colega)\b", lower):
+        return "relationships"
+    if re.search(r"\b(?:prefere|preferência|preferencias|gosta|favorito|favorita|favorite|hobby)\b", lower):
+        return "preferences"
+    if re.search(r"\b(?:desej|gostaria|sonho|pretende|planos?\s+para\s+o\s+futuro|wish|want)\b", lower):
+        return "wishes"
+    if re.search(r"\b(?:nome|name|idade|age|aniversário|birthday|cidade|city|idioma|language|nacionalidade|nationality|telefone|phone|email)\b", lower):
+        return "identity"
     if "objetivo" in lower or "meta" in lower:
-        return "objetivo"
+        return "projects"
     if "decid" in lower or "usamos" in lower or "escolh" in lower:
-        return "decisao"
+        return "projects"
     if "stack" in lower or "tecnologia" in lower or "python" in lower or "gemini" in lower:
-        return "stack"
-    if mode == "explicit":
-        return "registro"
-    return "projeto"
+        return "projects"
+    if "projeto" in lower or "project" in lower:
+        return "projects"
+    return "notes"
 
 
 def classify_memory(text: str, *, confirmed: bool = False, project: str | None = None, origin: str = "user") -> MemoryProposal:
@@ -239,7 +251,7 @@ def classify_memory(text: str, *, confirmed: bool = False, project: str | None =
         mode=mode,
         title=_title_from_text(cleaned),
         content=cleaned,
-        category=_category_for(cleaned, mode),
+        category=_category_for(cleaned),
         project=project or _extract_project(cleaned),
         origin=origin,
         confidence=confidence,
@@ -260,11 +272,44 @@ def _safe_note_name(title: str, project: str) -> str:
     return name or f"memoria_{project.lower()}"
 
 
-def persist_memory_proposal(proposal: MemoryProposal, *, confirmed: bool = False) -> dict:
-    """Persiste uma proposta de memória só quando ela for elegível.
+def _note_slug(category: str, content: str) -> str:
+    patterns = {
+        "projects": r"(?i:\bprojeto\b)\s+(?:(?i:chamado|nomeado|denominado)\s+)?[\"'“]?([A-ZÀ-ÖØ-Þ][\wÀ-ÿ-]*(?:\s+[A-ZÀ-ÖØ-Þ][\wÀ-ÿ-]*){0,2})",
+        "relationships": r"(?i:\b(?:amigo|amiga|irm[aã]o|irmã|mãe|pai|esposa|marido|filho|filha|parceiro|parceira|colega)\b)\s+(?:(?i:chamado|chamada)\s+)?[\"'“]?([A-ZÀ-ÖØ-Þ][\wÀ-ÿ-]*(?:\s+[A-ZÀ-ÖØ-Þ][\wÀ-ÿ-]*){0,2})",
+    }
+    name = ""
+    quoted = re.search(r"[\"“]([^\"”]{1,80})[\"”]", content)
+    if quoted:
+        name = quoted[1].strip()
+    elif category in patterns:
+        match = re.search(patterns[category], content)
+        if match:
+            candidate = match[1].strip()
+            if candidate.split()[0].casefold() not in {
+                "é", "de", "do", "da", "para", "que", "um", "uma", "the",
+            }:
+                name = candidate
 
-    A escrita permanece separada em knowledge_vault.py, conforme a arquitetura.
-    """
+    normalized = unicodedata.normalize("NFKD", name)
+    ascii_name = normalized.encode("ascii", "ignore").decode("ascii")
+    slug = re.sub(r"[^a-z0-9]+", "-", ascii_name.lower()).strip("-")
+    if slug:
+        return slug[:60].strip("-")
+    digest = hashlib.sha256(content.encode("utf-8")).hexdigest()[:10]
+    prefix = "projeto" if category == "projects" else "pessoa"
+    return f"{prefix}-{digest}"
+
+
+def _fact_key(proposal: MemoryProposal) -> str:
+    if proposal.key.strip():
+        return proposal.key
+    normalized = unicodedata.normalize("NFKD", proposal.title or proposal.content)
+    ascii_text = normalized.encode("ascii", "ignore").decode("ascii")
+    return re.sub(r"[^a-zA-Z0-9]+", "_", ascii_text.lower()).strip("_")[:60] or "fact"
+
+
+def persist_memory_proposal(proposal: MemoryProposal, *, confirmed: bool = False) -> dict:
+    """Persiste propostas elegíveis no armazenamento correspondente à categoria."""
     if proposal.mode == "ignore":
         return {"saved": False, "reason": "ignored", "mode": proposal.mode}
 
@@ -280,8 +325,47 @@ def persist_memory_proposal(proposal: MemoryProposal, *, confirmed: bool = False
     if not proposal.can_write:
         return {"saved": False, "reason": "not_writable", "mode": proposal.mode}
 
-    note_name = _safe_note_name(proposal.title or proposal.content, proposal.project)
-    path = knowledge_vault.write_note(note_name, f"# {proposal.title or 'Memória'}\n\n{proposal.content}\n\n- categoria: {proposal.category}\n- projeto: {proposal.project}\n- origem: {proposal.origin}\n- data: {proposal.date}\n- confiança: {proposal.confidence}\n- modo: {proposal.mode}\n- prioridade: {proposal.priority}")
+    category = proposal.category
+    if category in {"identity", "preferences", "wishes"}:
+        memory_store.upsert_fact(
+            category, _fact_key(proposal), proposal.content
+        )
+        note_name = {
+            "identity": "Identidade",
+            "preferences": "Preferencias",
+            "wishes": "Desejos",
+        }[category]
+        path = str(knowledge_vault._resolve(note_name))
+    else:
+        content = (
+            f"# {proposal.title or 'Memória'}\n\n{proposal.content}\n\n"
+            f"- categoria: {proposal.category}\n"
+            f"- projeto: {proposal.project}\n"
+            f"- origem: {proposal.origin}\n"
+            f"- data: {proposal.date}\n"
+            f"- confiança: {proposal.confidence}\n"
+            f"- modo: {proposal.mode}\n"
+            f"- prioridade: {proposal.priority}"
+        )
+        if category in {"projects", "relationships"}:
+            note_name = _note_slug(category, proposal.content)
+            writer = (
+                memory_store.write_project_note
+                if category == "projects"
+                else memory_store.write_person_note
+            )
+            writer(note_name, content)
+            path = str(
+                knowledge_vault._resolve(
+                    f"{'Projetos' if category == 'projects' else 'Pessoas'}/{note_name}"
+                )
+            )
+        else:
+            note_name = _safe_note_name(
+                proposal.title or proposal.content, proposal.project
+            )
+            knowledge_vault.write_note(note_name, content)
+            path = str(knowledge_vault._resolve(note_name))
 
     return {
         "saved": True,

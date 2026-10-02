@@ -30,6 +30,7 @@
 - `main.py` tem 1.920 linhas no checkout verificado nesta atualização. As contagens menores abaixo são marcos históricos, não o tamanho atual.
 - Removidos do runtime: boot/empacotamento portátil, sincronização Supabase, briefing automático, builders/widgets Qt legados, `core/crypto_vault.py` e as actions `weather_report`, `send_message`, `flight_finder` e `youtube_video`.
 - `memory/context_index.db` e `memory/audit_log.jsonl` são dados locais e não são versionados.
+- A memória estruturada e o log de sessões usam notas Markdown no vault; `memory/runtime_state.json` guarda posições de monitores e tópicos monitorados. `memory/long_term.json` e `memory/memory_manager.py` foram substituídos.
 
 ## Problemas ainda conhecidos
 

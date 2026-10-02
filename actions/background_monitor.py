@@ -4,7 +4,6 @@ Checks DDG news once per day per topic; alerts JARVIS when a new headline appear
 No crypto, no finance, no uninvited tracking.
 """
 import hashlib
-import json
 import re
 from datetime import datetime
 from pathlib import Path
@@ -38,20 +37,15 @@ def _title_hash(title: str) -> str:
 # ── Memory I/O ─────────────────────────────────────────────────────────────────
 
 def _load() -> dict:
-    from memory.memory_manager import load_memory
-    data = load_memory().get("monitors", {})
+    from core.runtime_state import load_runtime_state
+
+    data = load_runtime_state().get("monitors", {})
     return data if isinstance(data, dict) else {}
 
 def _save(monitors: dict) -> None:
-    from memory.memory_manager import load_memory, MEMORY_PATH, _lock
-    memory = load_memory()
-    memory["monitors"] = monitors
-    with _lock:
-        MEMORY_PATH.parent.mkdir(parents=True, exist_ok=True)
-        MEMORY_PATH.write_text(
-            json.dumps(memory, indent=2, ensure_ascii=False),
-            encoding="utf-8",
-        )
+    from core.runtime_state import update_runtime_state
+
+    update_runtime_state("monitors", monitors)
 
 
 # ── Public API ─────────────────────────────────────────────────────────────────
