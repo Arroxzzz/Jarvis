@@ -17,6 +17,15 @@
 
 ## Fase 8 — Auditoria Geral (em andamento)
 
+- [x] Remoções finais pós-Bloco 5: helpers `_get_api_key` sem uso, cofre criptográfico/dependência, testes correspondentes e versionamento dos dados locais; documentação de estado sincronizada.
+
+### Estado atual após os blocos de remoção
+
+- Removidos: boot/empacotamento portátil, sincronização Supabase, briefing automático de startup, builders/widgets Qt legados, `core/crypto_vault.py` e as actions `weather_report`, `send_message`, `flight_finder` e `youtube_video`.
+- `encrypt_bytes`, `decrypt_bytes` e `_derive_key` foram removidas junto com `core/crypto_vault.py`, após a remoção de seus consumidores.
+- A UI WebEngine e o quick drawer continuam ativos; memória local, busca manual de notícias, monitoramento de tópicos, voz/áudio e reminder foram preservados.
+- `memory/context_index.db` e `memory/audit_log.jsonl` permanecem como dados locais, fora do versionamento.
+
 - [x] Conferência objetiva dos três documentos contra os módulos diretamente relacionados, sem leitura linha a linha do projeto
 - [x] Confirmar que H5 não descreve mais o watchdog atual: `_turn_watchdog` reconecta quando uma resposta pendente passa de 20 segundos sem atividade
 - [ ] Investigar a qualidade do reconhecimento de fala de ponta a ponta; `_join_transcript` corrige a junção de fragmentos nos logs, mas a instrumentação temporária `[Transcript]` ainda existe em `main.py`
@@ -37,10 +46,10 @@
 
 ### Fase 1 — Tool Registry
 - [x] `core/tool_registry.py` criado com `ToolSpec`, `_REGISTRY`, `@register_tool`, `get_declarations()` e `dispatch()`
-- [x] `open_app`, `weather_report` migrados para registro por decorator
-- [x] `browser_control`, `file_controller`, `open_on_monitor`, `send_message`, `reminder`, `youtube_video` migrados
-- [x] `computer_settings`, `desktop_control`, `code_helper`, `dev_agent`, `web_search`, `file_processor`, `computer_control`, `game_updater`, `flight_finder`, `system_status`, `deep_reasoning`, `manage_monitor` migrados
-- [x] Casos especiais mantidos fora do registry: `find_context`, `save_memory`, `knowledge_note`, `sync_memory`, `shutdown_jarvis`, `screen_process`, `close_camera`
+- [x] Registro histórico inicial: `open_app`; `weather_report` removida posteriormente.
+- [x] `browser_control`, `file_controller`, `open_on_monitor` e `reminder` migrados; `send_message` e `youtube_video` removidos posteriormente.
+- [x] `computer_settings`, `desktop_control`, `code_helper`, `dev_agent`, `web_search`, `file_processor`, `computer_control`, `game_updater`, `system_status`, `deep_reasoning` e `manage_monitor` migrados; `flight_finder` removida posteriormente.
+- [x] Casos especiais mantidos fora do registry: `find_context`, `save_memory`, `knowledge_note`, `shutdown_jarvis`, `screen_process`, `close_camera`; `sync_memory` foi removida posteriormente.
 - [x] `_execute_tool_impl` reduzido para casos especiais + fallback do registry
 - [x] `TOOL_DECLARATIONS` derivado de `tool_registry.get_declarations()` com mescla dos casos especiais
 - [x] 7 fluxos da Fase 0 revalidados
@@ -162,7 +171,7 @@ O registro da época considerava a linha de produto pronta para uso seguro e val
 - [x] Fase 3: gate de confirmação por voz ("confirmo") para send_message, delete, restart, shutdown
 - [x] Fase 4: watchdog "aguardando resposta" (_awaiting_response) e correção do close_gate do wake word
 - [x] Fase 4B: wake word desligado por padrão após o modelo hey_jarvis não detectar "Jarvis" com fonética PT-BR; esse estado foi superado pela calibração e ativação do modelo próprio descritas na validação operacional abaixo.
-- [x] Fase 5: cofre 600k iterações (crypto_vault.py + boot_stage0.py, requer recifrar api_keys.enc/project.enc manualmente), vault Obsidian configurável via "vault_path" (antes fixo em D:\Memoria_Jarvis), get_home_dir() em code_helper/flight_finder/context_resolver, reindex duplicado removido do boot, DESTRUCTIVE_ACTIONS morta removida, gate de confirmação por voz estendido a shutdown_jarvis, código morto removido de web_search.py
+- [x] Fase 5 (histórico): o cofre de 600k iterações (`crypto_vault.py` + `boot_stage0.py`) foi removido posteriormente; vault Obsidian configurável via `vault_path`, `get_home_dir()` em `code_helper`/`flight_finder`/`context_resolver`, reindex duplicado removido do boot, `DESTRUCTIVE_ACTIONS` morta removida, gate de confirmação por voz estendido a `shutdown_jarvis` e código morto removido de `web_search.py`.
 - [x] Fase 5B: busca no vault roteada corretamente (knowledge_note em vez de find_context via prompt.txt/tool_declarations) e find_context passa a cobrir o vault também no fallback de varredura (_default_roots)
 - [x] Fase 5C: save_memory (modo "sugerido") passa pelo portão de confirmação por voz; knowledge_note/search_notes agora busca também pelo título da nota, não só pelo conteúdo
 - [x] Correção Fase 5C: save_memory deixou de exigir "confirmo" falado (era overreach — memória é local/reversível, diferente de ações externas). Corrigido na raiz: parâmetro user_confirmed no schema da tool, que o modelo marca true quando o usuário pede explicitamente para lembrar/salvar/registrar.

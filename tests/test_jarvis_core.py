@@ -11,12 +11,6 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from core.crypto_vault import (
-    decrypt_bytes,
-    encrypt_bytes,
-)
-
-
 @pytest.fixture(autouse=True)
 def reset_confirmation_gate(tmp_path, monkeypatch):
     from core import write_guard
@@ -28,25 +22,6 @@ def reset_confirmation_gate(tmp_path, monkeypatch):
     yield
     write_guard._pending = None
     write_guard._last_done = None
-
-
-def test_encrypt_decrypt_bytes_roundtrip():
-    data = b"JARVIS test payload \x00\xFF"
-    enc = encrypt_bytes(data, "senha_teste")
-    assert enc != data
-    assert decrypt_bytes(enc, "senha_teste") == data
-
-
-def test_decrypt_bytes_wrong_password():
-    enc = encrypt_bytes(b"segredo", "correta")
-    with pytest.raises(Exception):
-        decrypt_bytes(enc, "errada")
-
-
-def test_pbkdf2_deterministic():
-    from core.crypto_vault import _derive_key
-    assert _derive_key("abc") == _derive_key("abc")
-    assert _derive_key("abc") != _derive_key("ABC")
 
 
 def test_plugin_desconhecido_nasce_desligado():

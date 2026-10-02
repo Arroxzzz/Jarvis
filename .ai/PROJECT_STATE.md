@@ -26,8 +26,10 @@
 - O vault Obsidian agora cria WikiLinks automáticos por regex, oferece backlinks e participa do índice SQLite de contexto; a relevância considera a quantidade de backlinks.
 - O wake word é configurável e opt-in por padrão no código; na configuração local atual está habilitado com um modelo ONNX próprio em `models/wake/jarvis.onnx`. A validação de três dias de uso real continua pendente.
 - A proatividade local existe com regras de tempo de uso/horário, mas está desabilitada na configuração local atual.
-- Há criptografia local AES-GCM com derivação PBKDF2 de 600.000 iterações para arquivos de configuração e arquivo do projeto; `core/sync_manager.py` também oferece sincronização cifrada.
+- A criptografia do pacote portátil e a sincronização Supabase foram removidas; `core/crypto_vault.py` não existe mais.
 - `main.py` tem 1.920 linhas no checkout verificado nesta atualização. As contagens menores abaixo são marcos históricos, não o tamanho atual.
+- Removidos do runtime: boot/empacotamento portátil, sincronização Supabase, briefing automático, builders/widgets Qt legados, `core/crypto_vault.py` e as actions `weather_report`, `send_message`, `flight_finder` e `youtube_video`.
+- `memory/context_index.db` e `memory/audit_log.jsonl` são dados locais e não são versionados.
 
 ## Problemas ainda conhecidos
 
@@ -91,7 +93,7 @@ O JARVIS deve tratar o vault como fonte de memória do usuário, com:
 - metadados e links entre notas;
 - confirmação da fonte antes de afirmar uma lembrança;
 - escrita controlada, com registro do que foi adicionado ou alterado;
-- exclusão e sincronização opcionais, nunca obrigatórias.
+- exclusão opcional; não há sincronização em nuvem no runtime atual.
 
 Busca textual e indexação local não equivalem a introduzir um LLM local. Embeddings
 ou outro índice semântico só devem ser considerados depois de medir custo, memória
@@ -140,7 +142,7 @@ destrutivas. O custo deve ser validado com a aplicação minimizada e durante jo
 1. Gemini Live para diálogo de voz e multimodalidade.
 2. Groq para texto rápido quando houver chave e cota.
 3. OpenRouter `:free` apenas como fallback, com limites explícitos.
-4. Supabase Free apenas para memória sincronizada e storage cifrado; autenticação de usuário não faz parte do fluxo diário.
+4. A integração Supabase foi removida; não há sincronização em nuvem no runtime atual.
 5. Cloudflare Workers Free somente para rate limit, webhook e proxy curto; não para a sessão de áudio Live.
 
 Free tier não significa SLA, disponibilidade contínua ou latência constante.

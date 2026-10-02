@@ -2,14 +2,14 @@
 
 ## Estado real do sistema
 
-- Interface: PyQt6 + QWebEngineView, com a GUI em thread principal e a sessão em thread asyncio separada.
+- Interface atual: UI WebEngine hospedada em PyQt6, com a GUI em thread principal e a sessão em thread asyncio separada. Os builders/widgets Qt legados foram removidos.
 - Voz: Gemini Live como canal principal. Para tools e texto, a cadeia padrão é Groq → OpenRouter; Claude Sonnet 5 fica restrito a `deep_reasoning`. Não há LLM local na configuração de produto.
 - Memória: política em 4 estados e gravação local em Obsidian/Markdown no diretório configurado por `vault_path`.
 - Contexto: busca segura por arquivos e projeto ativo, com rótulos amigáveis para o usuário.
 - Segurança: rejeição de segredos, confirmação para ações sensíveis, modo de revisão sem autoexecução e políticas de opt-in para plugins de terceiros.
 - Wake word: `core/wake_word_gate.py` usa openWakeWord e aceita modelo configurável. O código vem desligado por padrão; a configuração local verificada liga `models/wake/jarvis.onnx`. A validação operacional por três dias ainda está pendente.
 - Proatividade: `actions/proactive.py` implementa avisos locais por tempo de uso/horário, com ativação explícita; está desligada na configuração local atual.
-- Configuração e pacote portátil: `core/crypto_vault.py` fornece criptografia AES-GCM/PBKDF2 para arquivos de configuração e arquivo do projeto; `core/boot_terminal.py` e `tools/build_vault.py` participam do fluxo de inicialização/empacotamento cifrado.
+- Removidos: boot/empacotamento portátil e criptografia de cofre; sincronização Supabase; briefing automático de startup; builders/widgets Qt legados; actions `weather_report`, `send_message`, `flight_finder` e `youtube_video`.
 - UX operacional: a política de arquivos foi ajustada para confirmar apenas exclusão; ações não destrutivas não bloqueiam o fluxo, e a abertura de pasta informa corretamente se o Explorer foi realmente acionado.
 - Mentoria: leitura diagnostica do projeto e patch sugerido, sem alteração automática.
 - Plugins: `memory/config_manager.py` usa opt-in por padrão; plugins desconhecidos ficam desligados até habilitação via Plugin Manager, sem ativação silenciosa.
@@ -39,12 +39,12 @@
 - `core/tool_registry.py` e `core/tool_declarations.py`: registro/dispatch e declarações das tools principais.
 - `core/llm_client.py`: chamadas de texto, limites por tipo de tarefa, métricas e fallback Groq → OpenRouter; Claude Sonnet 5 fica reservado para `deep_reasoning`.
 - `core/wake_word_gate.py`: buffer de áudio e gate openWakeWord configurável.
-- `core/crypto_vault.py` e `core/sync_manager.py`: criptografia local e sincronização cifrada.
 - `actions/proactive.py` e `core/hw_sensors.py`: proatividade local opt-in e consultas leves de inatividade/tela cheia.
 - `core/memory_policy.py`: política de gravação e classificação das lembranças.
 - `core/context_resolver.py`: resolução local de arquivos e contexto do projeto.
 - `actions/dev_agent.py`: revisão, mentoria e diagnóstico guiado sem aplicar alterações.
 - `memory/config_manager.py`: estado de plugins persistido em `api_keys.json` e regra default deny para módulos desconhecidos.
+- `ui.py` hospeda a UI WebEngine e os overlays ativos; os builders/widgets da UI Qt legada não fazem parte do runtime atual.
 
 ## Estado operacional
 

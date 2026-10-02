@@ -16,6 +16,8 @@ env/
 memory/*.json
 knowledge/*.md
 memory/sync_state.json
+memory/context_index.db
+memory/audit_log.jsonl
 *.log
 
 # ── Editor / OS ──────────────────────────────────────────────────────────
