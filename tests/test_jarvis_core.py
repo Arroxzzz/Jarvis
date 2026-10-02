@@ -423,7 +423,7 @@ def test_tool_registry_declares_core_tools():
 
     names = {tool["name"] for tool in get_declarations()}
     assert {
-        "open_app", "weather_report", "web_search", "computer_settings",
+        "open_app", "web_search", "computer_settings",
         "file_controller", "proactive_mode",
     }.issubset(names)
 
@@ -826,21 +826,6 @@ def test_file_controller_resolves_unique_extension_match(tmp_path, monkeypatch):
     assert file_controller.file_controller({
         "action": "read", "path": str(tmp_path), "name": "TESTE123",
     }) == "conteúdo"
-
-
-def test_flight_finder_uses_fallback_parser_without_fixed_dates(monkeypatch):
-    from actions import flight_finder
-    import core.llm_client as lc
-
-    url = flight_finder._build_google_flights_url("IST", "LHR", "2026-10-01")
-    assert "tfs=" not in url
-
-    monkeypatch.setattr(lc, "resilient_text_call", lambda *args, **kwargs: '[{"airline":"Test Air"}]')
-    assert flight_finder._parse_flights_with_gemini("page", "IST", "LHR", "2026-10-01") == [
-        {"airline": "Test Air"}
-    ]
-    monkeypatch.setattr(lc, "resilient_text_call", lambda *args, **kwargs: lc.LLM_FAIL_MSG)
-    assert flight_finder._parse_flights_with_gemini("page", "IST", "LHR", "2026-10-01") == []
 
 
 def test_audio_queue_snapshot_reports_backlog_and_underrun():
@@ -1364,31 +1349,6 @@ def test_dispatch_tool_ignores_model_confirmed_flag(tmp_path):
     result = asyncio.run(dispatch())
     assert "AGUARDANDO_CONFIRMACAO" in result
     assert target.exists()
-
-
-def test_send_message_requires_code_confirm(monkeypatch):
-    from core import tool_registry, write_guard
-
-    calls = []
-    monkeypatch.setattr(
-        tool_registry,
-        "send_message",
-        lambda **kwargs: calls.append(kwargs) or "sent",
-    )
-    args = {"receiver": "João", "message_text": "oi", "platform": "whatsapp"}
-    result = tool_registry._send_message_tool(args)
-    assert "AGUARDANDO_CONFIRMACAO" in result
-    assert calls == []
-
-    assert write_guard.on_turn_complete("pedido original", time.monotonic()) is None
-    decision = write_guard.on_turn_complete("confirmo", time.monotonic())
-    assert decision[1]["run"]() == "sent"
-    assert len(calls) == 1
-    assert calls[0]["parameters"] == args
-
-    result = tool_registry._send_message_tool({"message_text": "oi"})
-    assert result == "sent"
-    assert len(calls) == 2
 
 
 def test_computer_settings_restart_requires_code_confirm(monkeypatch):

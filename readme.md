@@ -519,16 +519,12 @@ JARVIS/
 │   ├── dev_agent.py
 │   ├── file_controller.py
 │   ├── file_processor.py
-│   ├── flight_finder.py
 │   ├── game_updater.py
 │   ├── open_app.py
 │   ├── proactive.py
 │   ├── screen_processor.py
-│   ├── send_message.py
 │   ├── system_monitor.py
-│   ├── weather_report.py
-│   ├── web_search.py
-│   └── youtube_video.py
+│   └── web_search.py
 │
 ├── core/
 │   └── installer.py

@@ -10,23 +10,10 @@ from core.paths import get_home_dir
 from core import write_guard
 
 
-def get_base_dir():
-    if getattr(sys, "frozen", False):
-        return Path(sys.executable).parent
-    return Path(__file__).resolve().parent.parent
-
-
-BASE_DIR         = get_base_dir()
-API_CONFIG_PATH  = BASE_DIR / "config" / "api_keys.json"
 PROJECTS_DIR     = get_home_dir() / "Desktop" / "JarvisProjects"
 MAX_FIX_ATTEMPTS = 5
 MODEL_PLANNER    = "gemini-flash-latest"
 MODEL_WRITER     = "gemini-flash-latest"
-
-def _get_api_key() -> str:
-    with open(API_CONFIG_PATH, "r", encoding="utf-8") as f:
-        return json.load(f)["gemini_api_key"]
-
 
 def _get_model(model_name: str = ""):
     class _TextModel:

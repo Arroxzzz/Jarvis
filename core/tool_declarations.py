@@ -57,30 +57,6 @@ TOOL_DECLARATIONS = [
         }
     },
     {
-        "name": "weather_report",
-        "description": "Gives the weather report to user",
-        "parameters": {
-            "type": "OBJECT",
-            "properties": {
-                "city": {"type": "STRING", "description": "City name"}
-            },
-            "required": ["city"]
-        }
-    },
-    {
-        "name": "send_message",
-        "description": "Sends a text message via WhatsApp, Telegram, or other messaging platform.",
-        "parameters": {
-            "type": "OBJECT",
-            "properties": {
-                "receiver":     {"type": "STRING", "description": "Recipient contact name"},
-                "message_text": {"type": "STRING", "description": "The message to send"},
-                "platform":     {"type": "STRING", "description": "Platform: WhatsApp, Telegram, etc."}
-            },
-            "required": ["receiver", "message_text", "platform"]
-        }
-    },
-    {
         "name": "reminder",
         "description": "Sets a timed reminder using Task Scheduler.",
         "parameters": {
@@ -91,24 +67,6 @@ TOOL_DECLARATIONS = [
                 "message": {"type": "STRING", "description": "Reminder message text"}
             },
             "required": ["date", "time", "message"]
-        }
-    },
-    {
-        "name": "youtube_video",
-        "description": (
-            "Controls YouTube. Use for: playing videos, summarizing a video's content, "
-            "getting video info, or showing trending videos."
-        ),
-        "parameters": {
-            "type": "OBJECT",
-            "properties": {
-                "action": {"type": "STRING", "description": "play | summarize | get_info | trending (default: play)"},
-                "query":  {"type": "STRING", "description": "Search query for play action"},
-                "save":   {"type": "BOOLEAN", "description": "Save summary to Notepad (summarize only)"},
-                "region": {"type": "STRING", "description": "Country code for trending e.g. TR, US"},
-                "url":    {"type": "STRING", "description": "Video URL for get_info action"},
-            },
-            "required": []
         }
     },
     {
@@ -347,23 +305,6 @@ TOOL_DECLARATIONS = [
                 "path":        {"type": "STRING",  "description": "Save path for screenshot"},
             },
             "required": ["action"]
-        }
-    },
-    {
-        "name": "flight_finder",
-        "description": "Searches Google Flights and speaks the best options.",
-        "parameters": {
-            "type": "OBJECT",
-            "properties": {
-                "origin":      {"type": "STRING",  "description": "Departure city or airport code"},
-                "destination": {"type": "STRING",  "description": "Arrival city or airport code"},
-                "date":        {"type": "STRING",  "description": "Departure date (any format)"},
-                "return_date": {"type": "STRING",  "description": "Return date for round trips"},
-                "passengers":  {"type": "INTEGER", "description": "Number of passengers (default: 1)"},
-                "cabin":       {"type": "STRING",  "description": "economy | premium | business | first"},
-                "save":        {"type": "BOOLEAN", "description": "Save results to Notepad"},
-            },
-            "required": ["origin", "destination", "date"]
         }
     },
     {
