@@ -148,8 +148,8 @@ manual e configuração de produção continuam sujeitos a confirmação humana.
   `dev_agent`, `web_search_action`, `computer_control` e `get_system_status`
   aparecem somente nas linhas de import em `main.py`. Os handlers são usados
   através de `core/tool_registry.py`; os imports locais de `_capture_camera`,
-  `_capture_screen`, `SystemMonitor`, `ProactiveEngine`, `monitor_check_all` e
-  `_fetch_news_sync` têm usos locais.
+  `_capture_screen`, `SystemMonitor`, `ProactiveEngine` e `monitor_check_all`
+  tinham usos locais na auditoria.
 - Imports em `main.py` de `add_monitor/remove_monitor/list_monitors` — **Alta**.
   Não são referenciados no corpo de `main.py`; as operações de monitoramento
   estão disponíveis pela tool/registry. Não foram encontrados testes que
@@ -402,15 +402,9 @@ atualização não modifica código nem configuração.
   continua tecnicamente registrada no registry.
 - `actions/youtube_video.py` — o usuário confirmou que não usa a funcionalidade;
   continua tecnicamente registrada no registry.
-- Briefing automático de notícias no startup — o usuário não quer notícias,
-  resumo de notícias ou briefing do mundo durante a inicialização. O fluxo
-  identificado em `main.py::_send_startup_briefing` (incluindo busca
-  `_fetch_news_sync`, entrega `_deliver_news` e agendamento condicionado por
-  `get_brief_enabled`) e a configuração `morning_brief_enabled` são candidatos
-  à remoção. A saudação de boot `_send_boot_greeting` é um caminho separado; a
-  decisão confirmada é sobre o briefing/noticiário automático. A busca manual
-  da tool `web_search` e o monitoramento de tópicos não foram declarados
-  dispensáveis por esta decisão.
+- O briefing/noticiário automático no startup foi removido no Bloco 3. A
+  saudação de boot é um caminho separado; a busca manual da tool `web_search`
+  e o monitoramento de tópicos permanecem.
 - Sincronização de memória com Supabase — descartada totalmente; a memória
   deverá permanecer local no PC. São candidatos à remoção o fluxo
   `core/sync_manager.py`, a tool/declaração `sync_memory`, o dispatch em

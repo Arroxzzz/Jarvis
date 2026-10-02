@@ -89,22 +89,6 @@ def save_assistant_config(assistant_name: str, user_name: str) -> None:
     _atomic_write(data)
 
 
-def get_brief_enabled() -> bool:
-    return load_api_keys().get("morning_brief_enabled", False)
-
-
-def save_brief_enabled(enabled: bool) -> None:
-    ensure_config_dir()
-    data: dict = {}
-    if CONFIG_FILE.exists():
-        try:
-            data = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
-        except Exception:
-            data = {}
-    data["morning_brief_enabled"] = enabled
-    _atomic_write(data)
-
-
 def get_plugin_enabled(plugin_name: str) -> bool:
     """Opt-in: plugin desconhecido nasce DESLIGADO até ser habilitado no Plugin Manager."""
     return load_api_keys().get("plugins_enabled", {}).get(plugin_name, False)

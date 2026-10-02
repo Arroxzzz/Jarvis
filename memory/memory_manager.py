@@ -249,7 +249,7 @@ def save_session_summary(summary: str, language: str = "") -> None:
 def pop_last_session() -> dict | None:
     """
     Return AND remove the most recent session entry.
-    Calling this consumes the entry so it is never repeated in future briefings.
+    Calling this consumes the entry so it is never repeated in future startup greetings.
     """
     with _lock:
         if not MEMORY_PATH.exists():
