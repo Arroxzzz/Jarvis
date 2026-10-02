@@ -16,7 +16,7 @@
   conclusão, duração de tools e duração de providers são emitidos como eventos `[METRIC]`.
 - `core/llm_client.py` mede chamadas remotas Groq/OpenRouter sem registrar conteúdo.
 - Comandos de texto agora iniciam eventos `[METRIC]` próprios; o caminho sem microfone participa do baseline.
-- Última suíte registrada nos documentos: 78 testes passando; não foi reexecutada nesta atualização documental.
+- Validação atual do checkout: `python -m pytest tests/ -v` — 129 testes passaram em 5,20 s.
 - `core/llm_client.py` agora registra `Retry-After`/rate-limit, bloqueia provider em circuit breaker e faz fallback Groq→OpenRouter de forma controlada.
 - O loader de plugins foi ajustado para opt-in por padrão: plugins novos descobertos em `/plugins` nascem desligados até ativação explícita no Plugin Manager; isso evita que código de terceiro seja ativado por omissão.
 - O log de boot em `main.py` agora conta plugins ativos e desligados, sem anunciar módulos indisponíveis como “carregados”.
@@ -27,10 +27,10 @@
 - O wake word é configurável e opt-in por padrão no código; na configuração local atual está habilitado com um modelo ONNX próprio em `models/wake/jarvis.onnx`. A validação de três dias de uso real continua pendente.
 - A proatividade local existe com regras de tempo de uso/horário, mas está desabilitada na configuração local atual.
 - A criptografia do pacote portátil e a sincronização Supabase foram removidas; `core/crypto_vault.py` não existe mais.
-- `main.py` tem 1.920 linhas no checkout verificado nesta atualização. As contagens menores abaixo são marcos históricos, não o tamanho atual.
-- Removidos do runtime: boot/empacotamento portátil, sincronização Supabase, briefing automático, builders/widgets Qt legados, `core/crypto_vault.py` e as actions `weather_report`, `send_message`, `flight_finder` e `youtube_video`.
+- `main.py` tem 1.755 linhas no checkout atual. As contagens de linhas abaixo são registros históricos de versões anteriores.
+- Removidos do runtime: boot/empacotamento portátil, sincronização Supabase, briefing automático, builders/widgets Qt legados, `core/crypto_vault.py` e as actions `weather_report`, `send_message`, `flight_finder` e `youtube_video`. A dependência `youtube-transcript-api` também foi removida.
 - `memory/context_index.db` e `memory/audit_log.jsonl` são dados locais e não são versionados.
-- A memória estruturada e o log de sessões usam notas Markdown no vault; `memory/runtime_state.json` guarda posições de monitores e tópicos monitorados. `memory/long_term.json` e `memory/memory_manager.py` foram substituídos.
+- `core/memory_store.py` usa o vault Markdown para fatos (`Identidade.md`, `Preferencias.md`, `Desejos.md`), sessões (`Sessoes.md`) e notas organizadas em `Projetos/`, `Pessoas/` e `Notas/`. `core/runtime_state.py` guarda posições de monitores e tópicos monitorados em `memory/runtime_state.json`. Os dados migrados de `memory/long_term.json` foram verificados; o arquivo e `memory/memory_manager.py` foram removidos.
 
 ## Problemas ainda conhecidos
 
@@ -142,7 +142,7 @@ destrutivas. O custo deve ser validado com a aplicação minimizada e durante jo
 
 1. Gemini Live para diálogo de voz e multimodalidade.
 2. Groq para texto rápido quando houver chave e cota.
-3. OpenRouter `:free` apenas como fallback, com limites explícitos.
+3. OpenRouter pago (GLM-5.3-Flash/DeepSeek V4.1 Flash) como fallback de texto após Groq; Claude Sonnet 5 permanece restrito a `deep_reasoning`.
 4. A integração Supabase foi removida; não há sincronização em nuvem no runtime atual.
 5. Cloudflare Workers Free somente para rate limit, webhook e proxy curto; não para a sessão de áudio Live.
 
@@ -155,7 +155,7 @@ Free tier não significa SLA, disponibilidade contínua ou latência constante.
 - A memória local foi integrada com política de decisão em quatro estados: automatic, suggested, explicit e ignore.
 - O contexto local do computador e do projeto foi resolvido com busca segura, sem expor caminhos absolutos ao usuário.
 - O `dev_agent` atua em revisão e mentoria guiada, sem autoalteração irrestrita.
-- A última validação de testes registrada foi de 78 testes passando; esse resultado é histórico e não foi reexecutado nesta atualização documental.
+- A suíte atual tem 129 testes passando; os registros de 78 testes nas fases abaixo são resultados históricos daquela etapa.
 - O modelo de plugins foi fechado em opt-in: qualquer plugin desconhecido ou de terceiro nasce desligado até habilitação explícita, evitando ativação silenciosa por descoberta automática.
 - A experiência de uso do assistente foi refinada para reduzir ruído de confirmação: ações não destrutivas seguem fluxo direto e só exclusão exige consentimento local.
 - A Fase 4 foi concluída com `BackgroundTaskTracker`; a última validação de então registrou 78 testes passando.
