@@ -510,50 +510,6 @@ def test_resolve_vault_dir_falls_back_when_unset():
     assert kv_module._resolve_vault_dir({}, Path("/home/paulo")) == Path("/home/paulo/JarvisVault")
 
 
-from core.sync_manager import _obfuscate_key, _resolve_password
-
-
-def test_resolve_password_uses_manual_if_set():
-    cfg = {"supabase_service_key": "sk_abc", "sync_password": "manual_pw"}
-    assert _resolve_password(cfg) == "manual_pw"
-
-
-def test_resolve_password_derives_from_service_key():
-    cfg = {"supabase_service_key": "sk_abc"}
-    pw = _resolve_password(cfg)
-    assert isinstance(pw, str) and len(pw) == 64
-
-
-def test_resolve_password_deterministic():
-    cfg = {"supabase_service_key": "sk_abc"}
-    assert _resolve_password(cfg) == _resolve_password(cfg)
-
-
-def test_resolve_password_different_keys_differ():
-    assert _resolve_password({"supabase_service_key": "sk_1"}) != _resolve_password({"supabase_service_key": "sk_2"})
-
-
-def test_resolve_password_missing_key_raises():
-    with pytest.raises(RuntimeError):
-        _resolve_password({})
-
-
-def test_obfuscate_key_deterministic():
-    assert _obfuscate_key("knowledge/nota.md") == _obfuscate_key("knowledge/nota.md")
-
-
-def test_obfuscate_key_different_inputs():
-    assert _obfuscate_key("a.md") != _obfuscate_key("b.md")
-
-
-def test_obfuscate_key_hides_filename():
-    key = _obfuscate_key("Senha_banco_itau.md")
-    assert "Senha" not in key
-    assert "itau" not in key
-
-
-
-
 @pytest.mark.asyncio
 async def test_run_tool_bound_timeout_message():
     from main import _run_tool_bound

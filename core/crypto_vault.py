@@ -1,6 +1,5 @@
 """
-core/crypto_vault.py — AES-256-GCM + PBKDF2 para os bytes sincronizados por
-core/sync_manager.py.
+core/crypto_vault.py — primitivas AES-256-GCM + PBKDF2 para criptografia de bytes.
 """
 import os
 

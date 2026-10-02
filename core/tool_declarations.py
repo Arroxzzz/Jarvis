@@ -572,14 +572,4 @@ TOOL_DECLARATIONS = [
             "required": ["action"]
         }
     },
-    {
-        "name": "sync_memory",
-        "description": (
-            "Sincroniza memória e notas de conhecimento com a nuvem (Supabase), de "
-            "forma criptografada. Use APENAS quando o usuário pedir explicitamente "
-            "('sincronize', 'salve na nuvem', 'sincronize tudo'). Nunca chame "
-            "proativamente ou por iniciativa própria."
-        ),
-        "parameters": {"type": "OBJECT", "properties": {}}
-    },
 ]

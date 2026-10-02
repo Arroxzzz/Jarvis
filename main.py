@@ -873,32 +873,6 @@ class JarvisLive:
             )
             return types.FunctionResponse(id=fc.id, name=name, response={"result": result})
 
-        if name == "sync_memory":
-            self.ui.write_log("SYS: Sincronizando com a nuvem...")
-
-            def _bg_sync():
-                try:
-                    from core.sync_manager import sync_all
-                    r = sync_all()
-                    self.ui.write_log(f"SYS: {r}")
-                    self.speak(
-                        f"[SYNC_RESULT — fale agora] Resultado da sincronização: {r} "
-                        f"Se houve conflito, explique que duas versões do mesmo arquivo "
-                        f"foram editadas em dispositivos diferentes e a versão local foi mantida. "
-                        f"Fale tudo isso naturalmente em 2-3 frases, Senhor."
-                    )
-                except Exception as e:
-                    self.ui.write_log(f"SYS: ⚠ Falha no sync: {e}")
-
-            self._tasks.spawn(_bg_sync, asyncio.get_event_loop(), task_name="sync_memory")
-            result = "Sincronizando agora, Senhor. Te aviso quando terminar."
-            if not self.ui.muted:
-                self.ui.set_state("LISTENING")
-            return types.FunctionResponse(
-                id=fc.id, name=name,
-                response={"result": result}
-            )
-
         loop   = asyncio.get_event_loop()
         result = "Done."
 
